@@ -2,6 +2,7 @@
   "use strict";
 
   var STORAGE_KEY = "inick-iptv-state-v1";
+  var SOURCE_SNAPSHOT_KEY = STORAGE_KEY + ":source";
   var FIRST_RENDER_LIMIT = 180;
   var RENDER_STEP = 180;
   var OVERLAY_HIDE_MS = 4200;
@@ -247,6 +248,43 @@
     }
   }
 
+  function persistSourceDraft(source) {
+    if (!source || (source.type !== "m3u-url" && source.type !== "xtream")) {
+      return;
+    }
+    try {
+      localStorage.setItem(SOURCE_SNAPSHOT_KEY, JSON.stringify({ v: 1, source: source }));
+    } catch (error) {
+      log("Nao foi possivel gravar credenciais da lista", error);
+    }
+  }
+
+  function loadSourceDraft() {
+    try {
+      var raw = localStorage.getItem(SOURCE_SNAPSHOT_KEY);
+      if (!raw) {
+        return null;
+      }
+      var data = JSON.parse(raw);
+      return data.source || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function applySourceToForm(src) {
+    if (!src) {
+      return;
+    }
+    if (src.type === "m3u-url") {
+      dom.m3uUrlInput.value = src.url || "";
+    } else if (src.type === "xtream") {
+      dom.xtreamServerInput.value = src.server || "";
+      dom.xtreamUserInput.value = src.username || "";
+      dom.xtreamPasswordInput.value = src.password || "";
+    }
+  }
+
   function restore() {
     var raw = null;
     try {
@@ -255,31 +293,61 @@
       raw = null;
     }
 
-    if (!raw) {
-      return;
+    if (raw) {
+      try {
+        var data = JSON.parse(raw);
+        state.channels = Array.isArray(data.channels) ? data.channels : [];
+        state.activeGroup = data.activeGroup || "all";
+        state.favorites = arrayToMap(data.favorites || []);
+        state.recent = Array.isArray(data.recent) ? data.recent : [];
+        state.source = data.source || null;
+        state.currentId = data.currentId || null;
+      } catch (error) {
+        log("Estado salvo invalido", error);
+        state.channels = [];
+      }
     }
 
-    try {
-      var data = JSON.parse(raw);
-      state.channels = Array.isArray(data.channels) ? data.channels : [];
-      state.activeGroup = data.activeGroup || "all";
-      state.favorites = arrayToMap(data.favorites || []);
-      state.recent = Array.isArray(data.recent) ? data.recent : [];
-      state.source = data.source || null;
-      state.currentId = data.currentId || null;
-
-      if (data.source && data.source.type === "m3u-url") {
-        dom.m3uUrlInput.value = data.source.url || "";
+    if (state.channels.length === 0) {
+      try {
+        var metaRaw = localStorage.getItem(STORAGE_KEY + ":meta");
+        if (metaRaw) {
+          var meta = JSON.parse(metaRaw);
+          if (meta.source) {
+            state.source = meta.source;
+          }
+          if (Array.isArray(meta.favorites) && meta.favorites.length) {
+            state.favorites = arrayToMap(meta.favorites);
+          }
+          if (Array.isArray(meta.recent)) {
+            state.recent = meta.recent;
+          }
+          if (meta.activeGroup) {
+            state.activeGroup = meta.activeGroup;
+          }
+          if (meta.currentId !== undefined && meta.currentId !== null) {
+            state.currentId = meta.currentId;
+          }
+        }
+      } catch (metaErr) {
+        log("Meta estado invalida", metaErr);
       }
-
-      if (data.source && data.source.type === "xtream") {
-        dom.xtreamServerInput.value = data.source.server || "";
-        dom.xtreamUserInput.value = data.source.username || "";
-        dom.xtreamPasswordInput.value = data.source.password || "";
-      }
-    } catch (error) {
-      log("Estado salvo invalido", error);
     }
+
+    var draft = loadSourceDraft();
+    if (state.channels.length === 0 && draft) {
+      state.source = draft;
+    }
+
+    var formSrc =
+      state.channels.length > 0 ? state.source : draft || state.source;
+    if (formSrc) {
+      applySourceToForm(formSrc);
+      state.modalMode = formSrc.type === "xtream" ? "xtream" : "m3u";
+    } else {
+      state.modalMode = state.modalMode || "m3u";
+    }
+    setModalMode(state.modalMode);
   }
 
   function persist() {
@@ -310,6 +378,21 @@
       } catch (secondError) {
         log("Nao foi possivel gravar meta da lista", secondError);
       }
+    }
+  }
+
+  function schedulePersist() {
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(
+        function () {
+          persist();
+        },
+        { timeout: 2500 }
+      );
+    } else {
+      setTimeout(function () {
+        persist();
+      }, 1);
     }
   }
 
@@ -652,71 +735,77 @@
     }
   }
 
-  function categoryThumbSource(item) {
+  function buildSidebarThumbHints(moduleList) {
+    var hints = {
+      firstAnyLogo: "",
+      byGroup: Object.create(null),
+      byGroupNorm: Object.create(null),
+      favoriteLogo: "",
+      collectionLogo: ""
+    };
     var i;
     var ch;
-    var recentList;
+    var g;
+    var gn;
+    var logo;
+
+    for (i = 0; i < moduleList.length; i += 1) {
+      ch = moduleList[i];
+      logo = trim(ch.logo);
+      if (!logo) {
+        continue;
+      }
+      if (!hints.firstAnyLogo) {
+        hints.firstAnyLogo = logo;
+      }
+      g = ch.group || "Sem grupo";
+      if (!hints.byGroup[g]) {
+        hints.byGroup[g] = logo;
+      }
+      gn = normalizeText(g);
+      if (!hints.byGroupNorm[gn]) {
+        hints.byGroupNorm[gn] = logo;
+      }
+      if (state.favorites[ch.id] && !hints.favoriteLogo) {
+        hints.favoriteLogo = logo;
+      }
+      if (state.module === "movies" && isCollectionLikeGroup(ch.group) && !hints.collectionLogo) {
+        hints.collectionLogo = logo;
+      }
+    }
+
+    hints.recentLogo = "";
+    var recentList = recentChannels();
+    for (i = 0; i < recentList.length; i += 1) {
+      if (trim(recentList[i].logo)) {
+        hints.recentLogo = trim(recentList[i].logo);
+        break;
+      }
+    }
+
+    return hints;
+  }
+
+  function sidebarThumbForEntry(item, hints) {
     var gname;
-    var list = currentModuleChannels();
-
+    var logo;
     if (item.id === "all") {
-      for (i = 0; i < list.length; i += 1) {
-        ch = list[i];
-        if (trim(ch.logo)) {
-          return { logo: ch.logo, label: item.name };
-        }
-      }
-      return { logo: "", label: item.name };
+      return { logo: hints.firstAnyLogo || "", label: item.name };
     }
-
     if (item.id === "favorites") {
-      for (i = 0; i < list.length; i += 1) {
-        ch = list[i];
-        if (state.favorites[ch.id] && trim(ch.logo)) {
-          return { logo: ch.logo, label: item.name };
-        }
-      }
-      return { logo: "", label: item.name };
+      return { logo: hints.favoriteLogo || "", label: item.name };
     }
-
     if (item.id === "recent") {
-      recentList = recentChannels();
-      for (i = 0; i < recentList.length; i += 1) {
-        ch = recentList[i];
-        if (trim(ch.logo)) {
-          return { logo: ch.logo, label: item.name };
-        }
-      }
-      return { logo: "", label: item.name };
+      return { logo: hints.recentLogo || "", label: item.name };
     }
-
     if (item.id === "movies:collections") {
-      for (i = 0; i < list.length; i += 1) {
-        ch = list[i];
-        if (isCollectionLikeGroup(ch.group) && trim(ch.logo)) {
-          return { logo: ch.logo, label: item.name };
-        }
-      }
-      return { logo: "", label: item.name };
+      return { logo: hints.collectionLogo || "", label: item.name };
     }
-
     if (item.id.indexOf("group:") === 0) {
       gname = item.id.substring(6);
-      for (i = 0; i < list.length; i += 1) {
-        ch = list[i];
-        if (ch.group === gname && trim(ch.logo)) {
-          return { logo: ch.logo, label: item.name };
-        }
-      }
-      for (i = 0; i < list.length; i += 1) {
-        ch = list[i];
-        if (normalizeText(ch.group) === normalizeText(gname) && trim(ch.logo)) {
-          return { logo: ch.logo, label: item.name };
-        }
-      }
-      return { logo: "", label: item.name };
+      logo = hints.byGroup[gname] || hints.byGroupNorm[normalizeText(gname)] || "";
+      return { logo: logo, label: item.name };
     }
-
     return { logo: "", label: item.name };
   }
 
@@ -749,6 +838,7 @@
   function renderGroups() {
     var groupList = dom.groupList;
     var moduleList = currentModuleChannels();
+    var hints = buildSidebarThumbHints(moduleList);
     var counts = countByGroup(moduleList);
     var moduleGroups = sortGroupNamesAdultLast(buildGroups(moduleList));
     var entries = [
@@ -795,7 +885,7 @@
       button.setAttribute("data-focusable", "true");
       button.setAttribute("data-group", item.id);
 
-      thumb = categoryThumbSource(item);
+      thumb = sidebarThumbForEntry(item, hints);
       button.appendChild(createLogoThumb(thumb.logo, thumb.label));
 
       var title = document.createElement("strong");
@@ -1083,15 +1173,14 @@
     var hadModal = !dom.playlistModal.hidden;
     dom.playlistModal.hidden = true;
 
-    importFromUrl(
-      url,
-      {
-        type: "m3u-url",
-        url: url,
-        label: "M3U remoto"
-      },
-      { recoverModalOnFail: hadModal }
-    );
+    var m3uSource = {
+      type: "m3u-url",
+      url: url,
+      label: "M3U remoto"
+    };
+    persistSourceDraft(m3uSource);
+
+    importFromUrl(url, m3uSource, { recoverModalOnFail: hadModal });
   }
 
   function loadXtream() {
@@ -1108,17 +1197,16 @@
     var hadModal = !dom.playlistModal.hidden;
     dom.playlistModal.hidden = true;
 
-    importFromUrl(
-      url,
-      {
-        type: "xtream",
-        server: server,
-        username: username,
-        password: password,
-        label: "Xtream"
-      },
-      { recoverModalOnFail: hadModal }
-    );
+    var xtreamSource = {
+      type: "xtream",
+      server: server,
+      username: username,
+      password: password,
+      label: "Xtream"
+    };
+    persistSourceDraft(xtreamSource);
+
+    importFromUrl(url, xtreamSource, { recoverModalOnFail: hadModal });
   }
 
   function loadPlaylistFile(event) {
@@ -1168,7 +1256,7 @@
     }
 
     if (state.source.type === "m3u-url") {
-      importFromUrl(state.source.url, state.source);
+      importFromUrl(state.source.url, state.source, { forceNetwork: true });
     } else if (state.source.type === "xtream") {
       importFromUrl(
         buildXtreamM3uUrl(
@@ -1176,7 +1264,8 @@
           state.source.username,
           state.source.password
         ),
-        state.source
+        state.source,
+        { forceNetwork: true }
       );
     }
   }
@@ -1235,7 +1324,9 @@
         setModalMessage(parseError.message || "Lista M3U invalida.");
         showToast("Lista invalida");
       }
-    });
+    },
+      { bypassCache: !!options.forceNetwork }
+    );
   }
 
   function applyPlaylist(text, source, options) {
@@ -1261,6 +1352,12 @@
     state.channels = channels;
     rebuildModuleBuckets();
     state.source = source;
+    if (
+      source &&
+      (source.type === "m3u-url" || source.type === "xtream")
+    ) {
+      persistSourceDraft(source);
+    }
     state.activeGroup = "all";
     state.renderLimit = FIRST_RENDER_LIMIT;
     state.query = "";
@@ -1273,9 +1370,7 @@
     if (!options.skipSuccessToast) {
       showToast(pluralize(channels.length, "canal carregado", "canais carregados"));
     }
-    setTimeout(function () {
-      persist();
-    }, 0);
+    schedulePersist();
   }
 
   function parseM3u(text) {
@@ -1362,9 +1457,12 @@
     };
   }
 
-  function requestText(url, callback) {
+  function requestText(url, callback, fetchOpts) {
+    fetchOpts = fetchOpts || {};
+    var cacheMode = fetchOpts.bypassCache ? "no-store" : "default";
+
     if (window.fetch) {
-      fetch(url, { cache: "no-store" })
+      fetch(url, { cache: cacheMode })
         .then(function (response) {
           if (!response.ok) {
             throw new Error("HTTP " + response.status);
