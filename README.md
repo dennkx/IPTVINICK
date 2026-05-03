@@ -38,19 +38,48 @@ Algumas listas remotas podem falhar no navegador por CORS. Na TV Tizen, o app em
 
 ## Git e GitHub
 
-Precisa do [Git for Windows](https://git-scm.com/download/win) instalado e no PATH. Crie um repositorio vazio no GitHub (sem README) e depois, na pasta do projeto:
+Precisa do [Git for Windows](https://git-scm.com/download/win) (inclui o **Git Credential Manager**, login pelo browser).
 
-```powershell
-cd "c:\Users\ThinkPad\Documents\IPTV iNick"
-git init
-git add .
-git commit -m "Initial commit: iNick IPTV"
-git branch -M main
+Crie no GitHub um repositorio **vazio** (sem README gerado).
+
+### Pelo Command Prompt (cmd)
+
+1. Win+R, escreva `cmd`, Enter.
+2. Entre na pasta do projeto (o caminho com espacos precisa de aspas):
+
+```bat
+cd /d "c:\Users\ThinkPad\Documents\IPTV iNick"
+```
+
+3. Se o comando `git` nao for reconhecido, use o caminho completo ou adicione ao PATH desta sessao:
+
+```bat
+set "PATH=%ProgramFiles%\Git\cmd;%PATH%"
+git --version
+```
+
+4. **Opcao A — script:** edite em `push-github.cmd` a variavel `ORIGIN_URL` com o URL HTTPS do repo, guarde, e faça duplo clique no ficheiro ou execute `push-github.cmd` a partir desta pasta. Na primeira `git push`, o **navegador** abre para autorizar a conta GitHub.
+
+5. **Opcao B — comandos manuais** (se o repo ja tem `git init` e commit):
+
+```bat
 git remote add origin https://github.com/SEU_USUARIO/SEU_REPO.git
 git push -u origin main
 ```
 
-Substitua a URL do `origin` pela do seu repositorio. Para SSH: `git@github.com:USUARIO/REPO.git`.
+Se o `remote origin` ja existir, use `git remote set-url origin https://github.com/...` em vez de `add`.
+
+**Login no CMD:** com HTTPS, o Git Credential Manager pede login no browser. Se aparecer pedido no proprio CMD (utilizador/senha), o GitHub **nao** aceita a senha da conta: crie um **Personal Access Token** em https://github.com/settings/tokens (permisso `repo`), use o nome de utilizador GitHub e cole o token como "senha".
+
+Para SSH em vez de HTTPS: `git@github.com:USUARIO/REPO.git` e chaves SSH configuradas no GitHub.
+
+### PowerShell (alternativa)
+
+```powershell
+cd "c:\Users\ThinkPad\Documents\IPTV iNick"
+git remote add origin https://github.com/SEU_USUARIO/SEU_REPO.git
+git push -u origin main
+```
 
 O `.gitignore` ignora pasta `.vercel/`, ficheiros `.env*` e lixo comum do sistema.
 
@@ -78,6 +107,7 @@ Com **dominio proprio** na Vercel pode aparecer um 404 no console para `$WEBAPIS
 
 ```text
 .gitignore
+push-github.cmd
 config.xml
 index.html
 vercel.json
