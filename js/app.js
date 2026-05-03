@@ -3,6 +3,9 @@
 
   var STORAGE_KEY = "inick-iptv-state-v1";
   var SOURCE_SNAPSHOT_KEY = STORAGE_KEY + ":source";
+  var M3U_TEXT_CACHE_KEY = STORAGE_KEY + ":m3u-text";
+  var M3U_CACHE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+  var M3U_CACHE_MAX_CHARS = 4200000;
   var FIRST_RENDER_LIMIT = 180;
   var RENDER_STEP = 180;
   var OVERLAY_HIDE_MS = 4200;
@@ -11,6 +14,7 @@
   var overlayTimer = null;
   var toastTimer = null;
   var clockTimer = null;
+  var htmlVideoStrategyIndex = 0;
 
   var state = {
     channels: [],
@@ -257,6 +261,59 @@
     } catch (error) {
       log("Nao foi possivel gravar credenciais da lista", error);
     }
+  }
+
+  function writeM3uTextCache(url, text) {
+    if (!url || text == null || text === "") {
+      return;
+    }
+    try {
+      var entry = {
+        u: url,
+        t: Date.now(),
+        body: String(text)
+      };
+      var raw = JSON.stringify(entry);
+      if (raw.length > M3U_CACHE_MAX_CHARS) {
+        return;
+      }
+      localStorage.setItem(M3U_TEXT_CACHE_KEY, raw);
+    } catch (error) {
+      log("Cache M3U nao gravada", error);
+    }
+  }
+
+  function readM3uTextCache(url) {
+    if (!url) {
+      return null;
+    }
+    try {
+      var raw = localStorage.getItem(M3U_TEXT_CACHE_KEY);
+      if (!raw) {
+        return null;
+      }
+      var entry = JSON.parse(raw);
+      if (!entry || entry.u !== url || entry.body == null || entry.body === "") {
+        return null;
+      }
+      if (Date.now() - Number(entry.t || 0) > M3U_CACHE_MAX_AGE_MS) {
+        return null;
+      }
+      return String(entry.body);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function cloneImportOptions(options) {
+    var out = {};
+    var k;
+    for (k in options) {
+      if (Object.prototype.hasOwnProperty.call(options, k)) {
+        out[k] = options[k];
+      }
+    }
+    return out;
   }
 
   function loadSourceDraft() {
@@ -1273,6 +1330,40 @@
   function importFromUrl(url, source, options) {
     options = options || {};
 
+    var canUseDiskCache =
+      !options.forceNetwork &&
+      !options.quietRefresh &&
+      !options.skipDiskCache;
+
+    if (canUseDiskCache) {
+      var cachedBody = readM3uTextCache(url);
+      if (cachedBody) {
+        var cacheOk = false;
+        try {
+          applyPlaylist(cachedBody, source, {
+            cacheWriteUrl: url,
+            skipCacheWrite: true,
+            skipSuccessToast: options.skipSuccessToast,
+            recoverModalOnFail: options.recoverModalOnFail,
+            noSplash: options.noSplash
+          });
+          cacheOk = true;
+        } catch (cacheErr) {
+          log("Cache M3U invalida", cacheErr);
+        }
+        importFromUrl(url, source, {
+          quietRefresh: true,
+          noSplash: true,
+          forceNetwork: true,
+          skipDiskCache: true,
+          skipSuccessToast: true
+        });
+        if (cacheOk) {
+          return;
+        }
+      }
+    }
+
     if (!options.noSplash) {
       showAppLoader(options.loaderText || "A descarregar lista...");
     }
@@ -1281,57 +1372,63 @@
       showToast("Carregando lista IPTV");
     }
 
-    requestText(url, function (error, text) {
-      var message =
-        "Nao foi possivel carregar. Verifique a URL, a rede ou o CORS no teste pelo navegador.";
+    requestText(
+      url,
+      function (error, text) {
+        var message =
+          "Nao foi possivel carregar. Verifique a URL, a rede ou o CORS no teste pelo navegador.";
+        var apOpts = cloneImportOptions(options);
+        apOpts.cacheWriteUrl = url;
 
-      if (error) {
-        hideAppLoader();
-        if (options.quietRefresh) {
-          log("Atualizacao em segundo plano falhou", error);
+        if (error) {
+          hideAppLoader();
+          if (options.quietRefresh) {
+            log("Atualizacao em segundo plano falhou", error);
+            return;
+          }
+          if (state.channels.length > 0) {
+            showLive();
+          } else {
+            showHome();
+          }
+          if (options.recoverModalOnFail || state.channels.length === 0) {
+            dom.playlistModal.hidden = false;
+          }
+          setModalMessage(message);
+          showToast("Falha ao carregar lista");
+          log(message, error);
           return;
         }
-        if (state.channels.length > 0) {
-          showLive();
-        } else {
-          showHome();
-        }
-        if (options.recoverModalOnFail || state.channels.length === 0) {
-          dom.playlistModal.hidden = false;
-        }
-        setModalMessage(message);
-        showToast("Falha ao carregar lista");
-        log(message, error);
-        return;
-      }
 
-      try {
-        applyPlaylist(text, source, options);
-      } catch (parseError) {
-        hideAppLoader();
-        if (options.quietRefresh) {
-          log(parseError.message || parseError, parseError);
-          return;
+        try {
+          applyPlaylist(text, source, apOpts);
+        } catch (parseError) {
+          hideAppLoader();
+          if (options.quietRefresh) {
+            log(parseError.message || parseError, parseError);
+            return;
+          }
+          if (state.channels.length > 0) {
+            showLive();
+          } else {
+            showHome();
+          }
+          if (options.recoverModalOnFail || state.channels.length === 0) {
+            dom.playlistModal.hidden = false;
+          }
+          setModalMessage(parseError.message || "Lista M3U invalida.");
+          showToast("Lista invalida");
         }
-        if (state.channels.length > 0) {
-          showLive();
-        } else {
-          showHome();
-        }
-        if (options.recoverModalOnFail || state.channels.length === 0) {
-          dom.playlistModal.hidden = false;
-        }
-        setModalMessage(parseError.message || "Lista M3U invalida.");
-        showToast("Lista invalida");
-      }
-    },
+      },
       { bypassCache: !!options.forceNetwork }
     );
   }
 
   function applyPlaylist(text, source, options) {
     options = options || {};
-    dom.playlistModal.hidden = true;
+    if (!options.quietRefresh) {
+      dom.playlistModal.hidden = true;
+    }
 
     var channels = parseM3u(text);
 
@@ -1358,6 +1455,21 @@
     ) {
       persistSourceDraft(source);
     }
+
+    if (options.quietRefresh) {
+      hideAppLoader();
+      schedulePersist();
+      if (options.cacheWriteUrl && !options.skipCacheWrite) {
+        writeM3uTextCache(options.cacheWriteUrl, text);
+      }
+      if (state.view === "live") {
+        renderAll();
+      } else {
+        renderShell();
+      }
+      return;
+    }
+
     state.activeGroup = "all";
     state.renderLimit = FIRST_RENDER_LIMIT;
     state.query = "";
@@ -1371,6 +1483,9 @@
       showToast(pluralize(channels.length, "canal carregado", "canais carregados"));
     }
     schedulePersist();
+    if (options.cacheWriteUrl && !options.skipCacheWrite) {
+      writeM3uTextCache(options.cacheWriteUrl, text);
+    }
   }
 
   function parseM3u(text) {
@@ -1580,36 +1695,178 @@
     }
   }
 
+  function setHtmlVideoSrcPlain(v, url) {
+    v.pause();
+    while (v.firstChild) {
+      v.removeChild(v.firstChild);
+    }
+    v.removeAttribute("src");
+    v.src = url;
+    v.load();
+  }
+
+  function setHtmlVideoSrcHls(v, url) {
+    v.pause();
+    while (v.firstChild) {
+      v.removeChild(v.firstChild);
+    }
+    v.removeAttribute("src");
+    var s = document.createElement("source");
+    s.src = url;
+    s.type = "application/vnd.apple.mpegurl";
+    v.appendChild(s);
+    v.load();
+  }
+
   function playWithHtmlVideo(url) {
     try {
-      dom.htmlPlayer.pause();
-      dom.htmlPlayer.removeAttribute("src");
-      dom.htmlPlayer.load();
-      dom.htmlPlayer.src = url;
-      dom.htmlPlayer.controls = false;
-      dom.htmlPlayer.autoplay = true;
-      dom.htmlPlayer.onplaying = htmlPlayingOnce;
-      dom.htmlPlayer.onerror = htmlErrorOnce;
-
-      var result = dom.htmlPlayer.play();
-      if (result && result["catch"]) {
-        result["catch"](function () {
-          showPlayerStatus("O navegador bloqueou o autoplay.");
-        });
-      }
+      htmlVideoStrategyIndex = 0;
+      applyHtmlVideoStrategy(url);
     } catch (error) {
       showPlayerStatus("Erro ao abrir stream");
       log("HTML video erro", error);
     }
   }
 
+  function applyHtmlVideoStrategy(url) {
+    var v = dom.htmlPlayer;
+    var strategies = htmlVideoStrategies;
+    var strat = strategies[htmlVideoStrategyIndex];
+
+    if (!strat) {
+      v.controls = true;
+      showPlayerStatus("Toque em Play no video ou escolha outro canal.");
+      return;
+    }
+
+    if (htmlVideoStrategyIndex > 0) {
+      showPlayerStatus("A tentar outro modo de reproducao...");
+    }
+
+    v.onplaying = null;
+    v.onerror = null;
+
+    strat.setup(v, url);
+
+    var advanced = false;
+    function advanceNext() {
+      if (advanced) {
+        return;
+      }
+      advanced = true;
+      htmlVideoStrategyIndex += 1;
+      if (htmlVideoStrategyIndex < strategies.length) {
+        setTimeout(function () {
+          applyHtmlVideoStrategy(url);
+        }, 120);
+      } else {
+        v.controls = true;
+        showPlayerStatus("Toque em Play no video. O browser pode bloquear autoplay.");
+      }
+    }
+
+    v.onplaying = function () {
+      advanced = true;
+      v.onplaying = null;
+      v.onerror = null;
+      htmlPlayingOnce();
+    };
+
+    v.onerror = function () {
+      advanceNext();
+    };
+
+    if (strat.userPlayOnly) {
+      showPlayerStatus("Toque em Play no video");
+      return;
+    }
+
+    try {
+      var result = v.play();
+      if (result && result["catch"]) {
+        result["catch"](function () {
+          advanceNext();
+        });
+      }
+    } catch (playErr) {
+      advanceNext();
+    }
+  }
+
+  var htmlVideoStrategies = [
+    {
+      userPlayOnly: false,
+      setup: function (v, url) {
+        v.controls = false;
+        v.muted = false;
+        v.defaultMuted = false;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        setHtmlVideoSrcPlain(v, url);
+      }
+    },
+    {
+      userPlayOnly: false,
+      setup: function (v, url) {
+        v.controls = false;
+        v.muted = true;
+        v.defaultMuted = true;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        setHtmlVideoSrcPlain(v, url);
+      }
+    },
+    {
+      userPlayOnly: false,
+      setup: function (v, url) {
+        v.controls = true;
+        v.muted = true;
+        v.defaultMuted = true;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        setHtmlVideoSrcPlain(v, url);
+      }
+    },
+    {
+      userPlayOnly: false,
+      setup: function (v, url) {
+        v.controls = true;
+        v.muted = false;
+        v.defaultMuted = false;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        if (/\.m3u8(\?|$)/i.test(url)) {
+          setHtmlVideoSrcHls(v, url);
+        } else {
+          setHtmlVideoSrcPlain(v, url);
+        }
+      }
+    },
+    {
+      userPlayOnly: true,
+      setup: function (v, url) {
+        v.controls = true;
+        v.muted = false;
+        v.defaultMuted = false;
+        v.autoplay = false;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        if (/\.m3u8(\?|$)/i.test(url)) {
+          setHtmlVideoSrcHls(v, url);
+        } else {
+          setHtmlVideoSrcPlain(v, url);
+        }
+      }
+    }
+  ];
+
   function htmlPlayingOnce() {
     showPlayerStatus("Ao vivo");
     hidePlayerStatusLater();
-  }
-
-  function htmlErrorOnce() {
-    showPlayerStatus("Stream nao suportado neste navegador");
   }
 
   function closePlayer() {
@@ -1628,7 +1885,13 @@
     }
 
     try {
+      htmlVideoStrategyIndex = 0;
+      dom.htmlPlayer.onplaying = null;
+      dom.htmlPlayer.onerror = null;
       dom.htmlPlayer.pause();
+      while (dom.htmlPlayer.firstChild) {
+        dom.htmlPlayer.removeChild(dom.htmlPlayer.firstChild);
+      }
       dom.htmlPlayer.removeAttribute("src");
       dom.htmlPlayer.load();
     } catch (error) {
