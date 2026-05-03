@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<widget
+  xmlns="http://www.w3.org/ns/widgets"
+  xmlns:tizen="http://tizen.org/ns/widgets"
+  id="https://inick.local/iptv"
+  version="1.0.0"
+  viewmodes="maximized">
+  <tizen:application id="INickIPTV1.App" package="INickIPTV1" required_version="2.4" />
+  <content src="index.html" />
+  <feature name="http://tizen.org/feature/screen.size.all" />
+  <icon src="icon.svg" />
+  <name>iNick IPTV</name>
+  <description>Player IPTV M3U para Samsung Tizen TV.</description>
+  <author email="local@inick.local" href="https://inick.local">iNick</author>
+  <license>Proprietary</license>
+  <access origin="*" subdomains="true" />
+  <tizen:privilege name="http://tizen.org/privilege/internet" />
+  <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice" />
+  <tizen:content-security-policy>
+    default-src 'self' data: blob: http: https:;
+    connect-src http: https:;
+    img-src 'self' data: http: https:;
+    media-src http: https: blob:;
+    script-src 'self';
+    style-src 'self';
+    object-src 'self';
+  </tizen:content-security-policy>
+  <tizen:profile name="tv" />
+  <tizen:setting
+    screen-orientation="landscape"
+    context-menu="disable"
+    background-support="disable"
+    encryption="disable"
+    install-location="auto"
+    hwkey-event="enable" />
+</widget>

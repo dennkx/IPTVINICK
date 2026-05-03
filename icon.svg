@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="72" fill="#101215"/>
+  <path d="M96 142h320v198H96z" fill="#ef6a52"/>
+  <path d="M124 170h264v142H124z" fill="#11161b"/>
+  <path d="M164 366h184v28H164z" fill="#35c7a1"/>
+  <path d="M219 340h74v34h-74z" fill="#f2c65d"/>
+  <text x="256" y="274" text-anchor="middle" font-family="Arial, sans-serif" font-size="118" font-weight="900" fill="#f7f2ea">IN</text>
+</svg>
