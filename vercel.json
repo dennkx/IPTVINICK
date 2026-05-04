@@ -1,4 +1,14 @@
 {
+  "rewrites": [
+    {
+      "source": "/iptv-proxy/:path*",
+      "destination": "http://hightechtvr1.online/:path*"
+    },
+    {
+      "source": "/hls/:path*",
+      "destination": "http://hightechtvr1.online/hls/:path*"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",

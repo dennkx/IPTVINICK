@@ -7,6 +7,9 @@
   var DEFAULT_M3U_URL =
     "https://hightechtvr1.online/get.php?username=902722181&password=575532272&type=m3u_plus&output=ts";
   var DEFAULT_M3U_LABEL = "Lista IPTV";
+  var HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js";
+  var MPEGTS_JS_URL =
+    "https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.min.js";
   var M3U_CACHE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
   var M3U_CACHE_MAX_CHARS = 4200000;
   var FIRST_RENDER_LIMIT = 180;
@@ -18,6 +21,10 @@
   var toastTimer = null;
   var clockTimer = null;
   var htmlVideoStrategyIndex = 0;
+  var htmlVideoRunId = 0;
+  var activeHlsPlayer = null;
+  var activeMpegTsPlayer = null;
+  var scriptLoadCallbacks = {};
 
   var state = {
     channels: [],
@@ -125,6 +132,38 @@
       );
     }
     return "";
+  }
+
+  function shouldUseIptvProxy() {
+    var loc = window.location || {};
+    var host = (loc.hostname || "").toLowerCase();
+    return (
+      loc.protocol === "https:" &&
+      host !== "localhost" &&
+      host !== "127.0.0.1" &&
+      host !== "hightechtvr1.online" &&
+      !canUseAvPlay()
+    );
+  }
+
+  function resolveIptvNetworkUrl(url) {
+    var link;
+    var path;
+    if (!shouldUseIptvProxy() || !url) {
+      return url;
+    }
+
+    link = document.createElement("a");
+    link.href = url;
+    if ((link.hostname || "").toLowerCase() !== "hightechtvr1.online") {
+      return url;
+    }
+
+    path = link.pathname || "/";
+    if (path.charAt(0) !== "/") {
+      path = "/" + path;
+    }
+    return "/iptv-proxy" + path + (link.search || "") + (link.hash || "");
   }
 
   function showAppLoader(message) {
@@ -1373,6 +1412,7 @@
   function importFromUrl(url, source, options) {
     options = options || {};
 
+    var requestUrl = options.skipProxy ? url : resolveIptvNetworkUrl(url);
     var canUseDiskCache =
       (!options.forceNetwork || options.useDiskCacheBeforeNetwork) &&
       !options.quietRefresh &&
@@ -1416,7 +1456,7 @@
     }
 
     requestText(
-      url,
+      requestUrl,
       function (error, text) {
         var message =
           "Nao foi possivel carregar. Verifique a URL, a rede ou o CORS no teste pelo navegador.";
@@ -1424,6 +1464,12 @@
         apOpts.cacheWriteUrl = url;
 
         if (error) {
+          if (requestUrl !== url && !options.skipProxy) {
+            var retryOpts = cloneImportOptions(options);
+            retryOpts.skipProxy = true;
+            importFromUrl(url, source, retryOpts);
+            return;
+          }
           hideAppLoader();
           if (options.quietRefresh) {
             log("Atualizacao em segundo plano falhou", error);
@@ -1446,6 +1492,12 @@
         try {
           applyPlaylist(text, source, apOpts);
         } catch (parseError) {
+          if (requestUrl !== url && !options.skipProxy) {
+            var parseRetryOpts = cloneImportOptions(options);
+            parseRetryOpts.skipProxy = true;
+            importFromUrl(url, source, parseRetryOpts);
+            return;
+          }
           hideAppLoader();
           if (options.quietRefresh) {
             log(parseError.message || parseError, parseError);
@@ -1739,21 +1791,13 @@
   }
 
   function setHtmlVideoSrcPlain(v, url) {
-    v.pause();
-    while (v.firstChild) {
-      v.removeChild(v.firstChild);
-    }
-    v.removeAttribute("src");
+    resetHtmlVideoElement(v);
     v.src = url;
     v.load();
   }
 
   function setHtmlVideoSrcHls(v, url) {
-    v.pause();
-    while (v.firstChild) {
-      v.removeChild(v.firstChild);
-    }
-    v.removeAttribute("src");
+    resetHtmlVideoElement(v);
     var s = document.createElement("source");
     s.src = url;
     s.type = "application/vnd.apple.mpegurl";
@@ -1761,10 +1805,208 @@
     v.load();
   }
 
+  function resetHtmlVideoElement(v) {
+    try {
+      v.pause();
+    } catch (error) {
+      log("Nao foi possivel pausar video", error);
+    }
+    while (v.firstChild) {
+      v.removeChild(v.firstChild);
+    }
+    v.removeAttribute("src");
+    v.removeAttribute("type");
+  }
+
+  function destroyHtmlStreamAdapters() {
+    if (activeHlsPlayer) {
+      try {
+        activeHlsPlayer.destroy();
+      } catch (error) {
+        log("Nao foi possivel fechar HLS", error);
+      }
+      activeHlsPlayer = null;
+    }
+
+    if (activeMpegTsPlayer) {
+      try {
+        activeMpegTsPlayer.unload();
+        activeMpegTsPlayer.detachMediaElement();
+        activeMpegTsPlayer.destroy();
+      } catch (error) {
+        log("Nao foi possivel fechar MPEG-TS", error);
+      }
+      activeMpegTsPlayer = null;
+    }
+  }
+
+  function loadScriptOnce(url, isReady, callback) {
+    var callbacks;
+    var script;
+
+    if (isReady()) {
+      callback(null);
+      return;
+    }
+
+    callbacks = scriptLoadCallbacks[url];
+    if (callbacks) {
+      callbacks.push(callback);
+      return;
+    }
+
+    scriptLoadCallbacks[url] = [callback];
+    script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.onload = function () {
+      finishScriptLoad(url, isReady() ? null : new Error("Biblioteca indisponivel"));
+    };
+    script.onerror = function () {
+      finishScriptLoad(url, new Error("Falha ao carregar biblioteca"));
+    };
+    document.head.appendChild(script);
+  }
+
+  function finishScriptLoad(url, error) {
+    var callbacks = scriptLoadCallbacks[url] || [];
+    var i;
+    delete scriptLoadCallbacks[url];
+    for (i = 0; i < callbacks.length; i += 1) {
+      callbacks[i](error);
+    }
+  }
+
+  function isHlsUrl(url) {
+    return /\.m3u8(\?|#|$)/i.test(url || "");
+  }
+
+  function isMpegTsUrl(url) {
+    return /\.ts(\?|#|$)/i.test(url || "");
+  }
+
+  function makeM3u8Variant(url) {
+    if (!isMpegTsUrl(url)) {
+      return "";
+    }
+    return String(url).replace(/\.ts(?=([?#]|$))/i, ".m3u8");
+  }
+
+  function canPlayNativeHls(v) {
+    return !!(
+      v.canPlayType &&
+      (v.canPlayType("application/vnd.apple.mpegurl") ||
+        v.canPlayType("application/x-mpegURL"))
+    );
+  }
+
+  function setupHlsPlayback(v, url, done, fail) {
+    if (!isHlsUrl(url)) {
+      done(new Error("Nao e HLS"));
+      return;
+    }
+
+    if (canPlayNativeHls(v)) {
+      setHtmlVideoSrcHls(v, url);
+      done(null);
+      return;
+    }
+
+    loadScriptOnce(
+      HLS_JS_URL,
+      function () {
+        return !!(window.Hls && Hls.isSupported && Hls.isSupported());
+      },
+      function (error) {
+        var hls;
+        if (error || !window.Hls || !Hls.isSupported || !Hls.isSupported()) {
+          done(error || new Error("HLS nao suportado"));
+          return;
+        }
+
+        resetHtmlVideoElement(v);
+        hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90
+        });
+        activeHlsPlayer = hls;
+        hls.attachMedia(v);
+        hls.on(Hls.Events.MEDIA_ATTACHED, function () {
+          hls.loadSource(url);
+          done(null);
+        });
+        hls.on(Hls.Events.ERROR, function (event, data) {
+          if (data && data.fatal) {
+            fail();
+          }
+        });
+      }
+    );
+  }
+
+  function setupMpegTsPlayback(v, url, done, fail) {
+    if (!isMpegTsUrl(url)) {
+      done(new Error("Nao e MPEG-TS"));
+      return;
+    }
+
+    loadScriptOnce(
+      MPEGTS_JS_URL,
+      function () {
+        return !!(window.mpegts && mpegts.isSupported && mpegts.isSupported());
+      },
+      function (error) {
+        var player;
+        if (
+          error ||
+          !window.mpegts ||
+          !mpegts.isSupported ||
+          !mpegts.isSupported()
+        ) {
+          done(error || new Error("MPEG-TS nao suportado"));
+          return;
+        }
+
+        resetHtmlVideoElement(v);
+        player = mpegts.createPlayer(
+          {
+            type: "mpegts",
+            isLive: true,
+            url: url
+          },
+          {
+            enableWorker: true,
+            lazyLoad: false,
+            liveBufferLatencyChasing: true
+          }
+        );
+        activeMpegTsPlayer = player;
+        if (mpegts.Events && mpegts.Events.ERROR) {
+          player.on(mpegts.Events.ERROR, function () {
+            fail();
+          });
+        }
+        player.attachMediaElement(v);
+        player.load();
+        done(null);
+      }
+    );
+  }
+
+  function setupM3u8VariantPlayback(v, url, done, fail) {
+    var variant = makeM3u8Variant(url);
+    if (!variant) {
+      done(new Error("Sem variante HLS"));
+      return;
+    }
+    setupHlsPlayback(v, variant, done, fail);
+  }
+
   function playWithHtmlVideo(url) {
     try {
       htmlVideoStrategyIndex = 0;
-      applyHtmlVideoStrategy(url);
+      applyHtmlVideoStrategy(resolveIptvNetworkUrl(url));
     } catch (error) {
       showPlayerStatus("Erro ao abrir stream");
       log("HTML video erro", error);
@@ -1775,7 +2017,9 @@
     var v = dom.htmlPlayer;
     var strategies = htmlVideoStrategies;
     var strat = strategies[htmlVideoStrategyIndex];
+    var runId = htmlVideoRunId + 1;
 
+    htmlVideoRunId = runId;
     if (!strat) {
       v.controls = true;
       showPlayerStatus("Toque em Play no video ou escolha outro canal.");
@@ -1789,14 +2033,28 @@
     v.onplaying = null;
     v.onerror = null;
 
-    strat.setup(v, url);
+    destroyHtmlStreamAdapters();
 
     var advanced = false;
+    var strategyTimer = setTimeout(function () {
+      advanceNext();
+    }, 15000);
+    function clearStrategyTimer() {
+      if (strategyTimer) {
+        clearTimeout(strategyTimer);
+        strategyTimer = null;
+      }
+    }
+
     function advanceNext() {
+      if (runId !== htmlVideoRunId) {
+        return;
+      }
       if (advanced) {
         return;
       }
       advanced = true;
+      clearStrategyTimer();
       htmlVideoStrategyIndex += 1;
       if (htmlVideoStrategyIndex < strategies.length) {
         setTimeout(function () {
@@ -1808,8 +2066,34 @@
       }
     }
 
+    function startVideo() {
+      if (runId !== htmlVideoRunId) {
+        return;
+      }
+      if (strat.userPlayOnly) {
+        clearStrategyTimer();
+        showPlayerStatus("Toque em Play no video");
+        return;
+      }
+
+      try {
+        var result = v.play();
+        if (result && result["catch"]) {
+          result["catch"](function () {
+            advanceNext();
+          });
+        }
+      } catch (playErr) {
+        advanceNext();
+      }
+    }
+
     v.onplaying = function () {
+      if (runId !== htmlVideoRunId) {
+        return;
+      }
       advanced = true;
+      clearStrategyTimer();
       v.onplaying = null;
       v.onerror = null;
       htmlPlayingOnce();
@@ -1819,19 +2103,15 @@
       advanceNext();
     };
 
-    if (strat.userPlayOnly) {
-      showPlayerStatus("Toque em Play no video");
-      return;
-    }
-
     try {
-      var result = v.play();
-      if (result && result["catch"]) {
-        result["catch"](function () {
+      strat.setup(v, url, function (error) {
+        if (error) {
           advanceNext();
-        });
-      }
-    } catch (playErr) {
+          return;
+        }
+        startVideo();
+      }, advanceNext);
+    } catch (setupErr) {
       advanceNext();
     }
   }
@@ -1839,7 +2119,43 @@
   var htmlVideoStrategies = [
     {
       userPlayOnly: false,
-      setup: function (v, url) {
+      setup: function (v, url, done, fail) {
+        v.controls = false;
+        v.muted = false;
+        v.defaultMuted = false;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        setupHlsPlayback(v, url, done, fail);
+      }
+    },
+    {
+      userPlayOnly: false,
+      setup: function (v, url, done, fail) {
+        v.controls = false;
+        v.muted = false;
+        v.defaultMuted = false;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        setupM3u8VariantPlayback(v, url, done, fail);
+      }
+    },
+    {
+      userPlayOnly: false,
+      setup: function (v, url, done, fail) {
+        v.controls = false;
+        v.muted = false;
+        v.defaultMuted = false;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        setupMpegTsPlayback(v, url, done, fail);
+      }
+    },
+    {
+      userPlayOnly: false,
+      setup: function (v, url, done) {
         v.controls = false;
         v.muted = false;
         v.defaultMuted = false;
@@ -1847,11 +2163,12 @@
         v.setAttribute("playsinline", "");
         v.setAttribute("webkit-playsinline", "");
         setHtmlVideoSrcPlain(v, url);
+        done(null);
       }
     },
     {
       userPlayOnly: false,
-      setup: function (v, url) {
+      setup: function (v, url, done) {
         v.controls = false;
         v.muted = true;
         v.defaultMuted = true;
@@ -1859,11 +2176,12 @@
         v.setAttribute("playsinline", "");
         v.setAttribute("webkit-playsinline", "");
         setHtmlVideoSrcPlain(v, url);
+        done(null);
       }
     },
     {
       userPlayOnly: false,
-      setup: function (v, url) {
+      setup: function (v, url, done) {
         v.controls = true;
         v.muted = true;
         v.defaultMuted = true;
@@ -1871,11 +2189,12 @@
         v.setAttribute("playsinline", "");
         v.setAttribute("webkit-playsinline", "");
         setHtmlVideoSrcPlain(v, url);
+        done(null);
       }
     },
     {
       userPlayOnly: false,
-      setup: function (v, url) {
+      setup: function (v, url, done) {
         v.controls = true;
         v.muted = false;
         v.defaultMuted = false;
@@ -1887,11 +2206,12 @@
         } else {
           setHtmlVideoSrcPlain(v, url);
         }
+        done(null);
       }
     },
     {
       userPlayOnly: true,
-      setup: function (v, url) {
+      setup: function (v, url, done) {
         v.controls = true;
         v.muted = false;
         v.defaultMuted = false;
@@ -1903,6 +2223,7 @@
         } else {
           setHtmlVideoSrcPlain(v, url);
         }
+        done(null);
       }
     }
   ];
@@ -1929,6 +2250,8 @@
 
     try {
       htmlVideoStrategyIndex = 0;
+      htmlVideoRunId += 1;
+      destroyHtmlStreamAdapters();
       dom.htmlPlayer.onplaying = null;
       dom.htmlPlayer.onerror = null;
       dom.htmlPlayer.pause();
