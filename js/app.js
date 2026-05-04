@@ -33,6 +33,7 @@
   var playbackRetryCount = 0;
   var playbackWatchdogId = "";
   var wakeLock = null;
+  var htmlVideoIosAutoplayUnmute = false;
 
   var state = {
     channels: [],
@@ -1983,6 +1984,14 @@
     );
   }
 
+  function isAppleTouchSafariVideo() {
+    var ua = navigator.userAgent || "";
+    if (/iPhone|iPad|iPod/i.test(ua)) {
+      return true;
+    }
+    return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1;
+  }
+
   function setupHlsPlayback(v, url, done, fail) {
     if (!isHlsUrl(url)) {
       done(new Error("Nao e HLS"));
@@ -2105,6 +2114,7 @@
     var runId = htmlVideoRunId + 1;
 
     htmlVideoRunId = runId;
+    htmlVideoIosAutoplayUnmute = false;
     if (!strat) {
       v.controls = true;
       showPlayerStatus("Toque em Play no video ou escolha outro canal.");
@@ -2181,6 +2191,14 @@
       clearStrategyTimer();
       v.onplaying = null;
       v.onerror = null;
+      if (htmlVideoIosAutoplayUnmute) {
+        htmlVideoIosAutoplayUnmute = false;
+        try {
+          v.muted = false;
+        } catch (unmuteErr) {
+          log("iOS unmute apos autoplay", unmuteErr);
+        }
+      }
       htmlPlayingOnce();
     };
 
@@ -2202,6 +2220,28 @@
   }
 
   var htmlVideoStrategies = [
+    {
+      userPlayOnly: false,
+      setup: function (v, url, done, fail) {
+        if (
+          !isAppleTouchSafariVideo() ||
+          !isHlsUrl(url) ||
+          !canPlayNativeHls(v)
+        ) {
+          done(new Error("skip-ios-native"));
+          return;
+        }
+        v.controls = false;
+        v.muted = true;
+        v.defaultMuted = true;
+        v.autoplay = true;
+        v.setAttribute("playsinline", "");
+        v.setAttribute("webkit-playsinline", "");
+        setHtmlVideoSrcHls(v, url);
+        htmlVideoIosAutoplayUnmute = true;
+        done(null);
+      }
+    },
     {
       userPlayOnly: false,
       setup: function (v, url, done, fail) {
