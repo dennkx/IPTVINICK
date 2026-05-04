@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
   <head>
     <meta charset="utf-8" />
@@ -43,7 +43,7 @@
           <div class="brand-tv" aria-hidden="true">IPTV</div>
           <div class="brand-copy">
             <strong>iNick</strong>
-            <span>SMARTERS</span>
+            <span>GOSTOSA</span>
             <em>PLAYER</em>
           </div>
         </div>
@@ -96,13 +96,21 @@
             <small id="liveCount">0 canais</small>
           </button>
 
-          <button class="home-tile movie-tile" data-focusable data-view-action="movies">
+          <button
+            class="home-tile movie-tile"
+            data-focusable
+            data-view-action="movies"
+          >
             <span class="tile-icon movie-icon" aria-hidden="true"></span>
             <strong>Movies</strong>
             <small id="movieCount">0 filmes</small>
           </button>
 
-          <button class="home-tile series-tile" data-focusable data-view-action="series">
+          <button
+            class="home-tile series-tile"
+            data-focusable
+            data-view-action="series"
+          >
             <span class="tile-icon series-icon" aria-hidden="true"></span>
             <strong>Series</strong>
             <small id="seriesCount">0 séries</small>
@@ -162,7 +170,11 @@
 
             <div id="emptyState" class="empty-state">
               <h2 id="emptyStateTitle">Nenhuma lista carregada</h2>
-              <button id="emptyImportButton" class="command primary" data-focusable>
+              <button
+                id="emptyImportButton"
+                class="command primary"
+                data-focusable
+              >
                 Adicionar lista
               </button>
             </div>
@@ -243,6 +255,17 @@
             type="button"
             data-focusable
             aria-label="Favorito"
+            aria-pressed="false"
+          >
+            <span class="player-btn-icon" aria-hidden="true"></span>
+          </button>
+          <button
+            id="fullscreenButton"
+            class="command player-btn player-btn--fullscreen"
+            type="button"
+            data-focusable
+            aria-label="Tela cheia"
+            aria-pressed="false"
           >
             <span class="player-btn-icon" aria-hidden="true"></span>
           </button>
@@ -345,7 +368,11 @@
 
         <label class="file-picker" data-focusable tabindex="0">
           Abrir arquivo M3U
-          <input id="playlistFileInput" type="file" accept=".m3u,.m3u8,text/*" />
+          <input
+            id="playlistFileInput"
+            type="file"
+            accept=".m3u,.m3u8,text/*"
+          />
         </label>
 
         <p id="modalMessage" class="modal-message" aria-live="polite"></p>
@@ -364,11 +391,11 @@
           <span class="app-loader-mark">IPTV</span>
           <div class="app-loader-titles">
             <strong>iNick</strong>
-            <span>SMARTERS</span>
+            <span>GOSTOSA</span>
             <em>PLAYER</em>
           </div>
         </div>
-        <p id="appLoaderStatus" class="app-loader-status">A preparar...</p>
+        <p id="appLoaderStatus" class="app-loader-status">0%</p>
         <div class="app-loader-bar" aria-hidden="true">
           <span class="app-loader-bar-fill"></span>
         </div>

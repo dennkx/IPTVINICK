@@ -20,11 +20,19 @@
   var overlayTimer = null;
   var toastTimer = null;
   var clockTimer = null;
+  var loaderTimer = null;
+  var loaderProgressValue = 0;
   var htmlVideoStrategyIndex = 0;
   var htmlVideoRunId = 0;
   var activeHlsPlayer = null;
   var activeMpegTsPlayer = null;
   var scriptLoadCallbacks = {};
+  var playbackWatchdogTimer = null;
+  var playbackRecoveryTimer = null;
+  var playbackLastProgressAt = 0;
+  var playbackRetryCount = 0;
+  var playbackWatchdogId = "";
+  var wakeLock = null;
 
   var state = {
     channels: [],
@@ -170,16 +178,48 @@
     if (!dom.appLoader) {
       return;
     }
-    if (dom.appLoaderStatus && message) {
-      dom.appLoaderStatus.textContent = message;
-    }
+    setAppLoaderProgress(0);
+    startAppLoaderProgress();
     dom.appLoader.hidden = false;
   }
 
   function hideAppLoader() {
+    stopAppLoaderProgress();
     if (dom.appLoader) {
       dom.appLoader.hidden = true;
     }
+  }
+
+  function startAppLoaderProgress() {
+    stopAppLoaderProgress();
+    loaderTimer = setInterval(function () {
+      if (loaderProgressValue < 88) {
+        setAppLoaderProgress(loaderProgressValue + 1);
+      }
+    }, 380);
+  }
+
+  function stopAppLoaderProgress() {
+    if (loaderTimer) {
+      clearInterval(loaderTimer);
+      loaderTimer = null;
+    }
+  }
+
+  function setAppLoaderProgress(percent) {
+    var n = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    loaderProgressValue = n;
+    if (dom.appLoaderStatus) {
+      dom.appLoaderStatus.textContent = n + "%";
+    }
+    if (dom.appLoaderBarFill) {
+      dom.appLoaderBarFill.style.width = n + "%";
+    }
+  }
+
+  function finishAppLoaderProgress() {
+    setAppLoaderProgress(100);
+    stopAppLoaderProgress();
   }
 
   function cacheDom() {
@@ -220,6 +260,7 @@
     dom.nextChannelButton = document.getElementById("nextChannelButton");
     dom.playPauseButton = document.getElementById("playPauseButton");
     dom.favoriteButton = document.getElementById("favoriteButton");
+    dom.fullscreenButton = document.getElementById("fullscreenButton");
 
     dom.playlistModal = document.getElementById("playlistModal");
     dom.closeModalButton = document.getElementById("closeModalButton");
@@ -236,6 +277,9 @@
     dom.toast = document.getElementById("toast");
     dom.appLoader = document.getElementById("appLoader");
     dom.appLoaderStatus = document.getElementById("appLoaderStatus");
+    dom.appLoaderBarFill = dom.appLoader
+      ? dom.appLoader.querySelector(".app-loader-bar-fill")
+      : null;
   }
 
   function bindEvents() {
@@ -304,9 +348,28 @@
     dom.favoriteButton.addEventListener("click", function () {
       toggleFavorite(state.currentId);
     });
+    if (dom.fullscreenButton) {
+      dom.fullscreenButton.addEventListener("click", toggleFullscreen);
+    }
 
+    dom.htmlPlayer.addEventListener("playing", markPlaybackHealthy);
+    dom.htmlPlayer.addEventListener("timeupdate", markPlaybackHealthy);
+    dom.htmlPlayer.addEventListener("progress", markPlaybackHealthy);
+    dom.htmlPlayer.addEventListener("canplay", markPlaybackHealthy);
+    dom.htmlPlayer.addEventListener("waiting", function () {
+      schedulePlaybackRecovery("Reconectando stream", 18000);
+    });
+    dom.htmlPlayer.addEventListener("stalled", function () {
+      schedulePlaybackRecovery("Reconectando stream", 12000);
+    });
+    dom.htmlPlayer.addEventListener("error", function () {
+      schedulePlaybackRecovery("Erro no video", 1200);
+    });
     dom.playerOverlay.addEventListener("mousemove", showPlayerOverlay);
     window.addEventListener("resize", resizeAvPlay);
+    document.addEventListener("fullscreenchange", updateFullscreenButton);
+    document.addEventListener("webkitfullscreenchange", updateFullscreenButton);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
   }
 
   function registerTvKeys() {
@@ -490,8 +553,7 @@
   }
 
   function persist() {
-    var payload = {
-      channels: state.channels,
+    var meta = {
       activeGroup: state.activeGroup,
       favorites: mapToArray(state.favorites),
       recent: state.recent,
@@ -500,23 +562,10 @@
     };
 
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.setItem(STORAGE_KEY + ":meta", JSON.stringify(meta));
     } catch (error) {
-      log("Nao foi possivel gravar lista completa (quota ou limite)", error);
-      try {
-        localStorage.setItem(
-          STORAGE_KEY + ":meta",
-          JSON.stringify({
-            activeGroup: state.activeGroup,
-            favorites: payload.favorites,
-            recent: state.recent,
-            source: state.source,
-            currentId: state.currentId
-          })
-        );
-      } catch (secondError) {
-        log("Nao foi possivel gravar meta da lista", secondError);
-      }
+      log("Nao foi possivel gravar meta da lista", error);
     }
   }
 
@@ -1490,6 +1539,9 @@
         }
 
         try {
+          if (!options.quietRefresh) {
+            setAppLoaderProgress(96);
+          }
           applyPlaylist(text, source, apOpts);
         } catch (parseError) {
           if (requestUrl !== url && !options.skipProxy) {
@@ -1515,7 +1567,14 @@
           showToast("Lista invalida");
         }
       },
-      { bypassCache: !!options.forceNetwork }
+      {
+        bypassCache: !!options.forceNetwork,
+        onProgress: options.quietRefresh
+          ? null
+          : function (percent) {
+              setAppLoaderProgress(percent);
+            }
+      }
     );
   }
 
@@ -1573,6 +1632,7 @@
     state.favorites = pruneMap(state.favorites);
 
     showLive();
+    finishAppLoaderProgress();
     hideAppLoader();
     if (!options.skipSuccessToast) {
       showToast(pluralize(channels.length, "canal carregado", "canais carregados"));
@@ -1667,11 +1727,19 @@
     };
   }
 
+  function appendCacheBuster(url) {
+    var hashIndex = String(url).indexOf("#");
+    var base = hashIndex === -1 ? String(url) : String(url).slice(0, hashIndex);
+    var hash = hashIndex === -1 ? "" : String(url).slice(hashIndex);
+    var sep = base.indexOf("?") === -1 ? "?" : "&";
+    return base + sep + "_iptv_t=" + Date.now() + hash;
+  }
+
   function requestText(url, callback, fetchOpts) {
     fetchOpts = fetchOpts || {};
     var cacheMode = fetchOpts.bypassCache ? "no-store" : "default";
 
-    if (window.fetch) {
+    if (window.fetch && !fetchOpts.onProgress) {
       fetch(url, { cache: cacheMode })
         .then(function (response) {
           if (!response.ok) {
@@ -1689,7 +1757,13 @@
 
     try {
       var xhr = new XMLHttpRequest();
-      xhr.open("GET", url, true);
+      xhr.open("GET", fetchOpts.bypassCache ? appendCacheBuster(url) : url, true);
+      xhr.onprogress = function (event) {
+        if (!fetchOpts.onProgress || !event.lengthComputable) {
+          return;
+        }
+        fetchOpts.onProgress((event.loaded / event.total) * 92);
+      };
       xhr.onreadystatechange = function () {
         if (xhr.readyState !== 4) {
           return;
@@ -1731,6 +1805,9 @@
     );
     updatePlayPauseButton();
     renderFavoriteButton();
+    updateFullscreenButton();
+    beginPlaybackWatchdog(channel.id, true);
+    requestScreenWakeLock();
     showPlayerStatus("Carregando");
     showPlayerOverlay();
 
@@ -1758,25 +1835,31 @@
       webapis.avplay.setListener({
         onbufferingstart: function () {
           showPlayerStatus("Carregando");
+          schedulePlaybackRecovery("Reconectando stream", 22000);
         },
         onbufferingprogress: function (percent) {
+          markPlaybackHealthy();
           showPlayerStatus("Carregando " + percent + "%");
         },
         onbufferingcomplete: function () {
+          markPlaybackHealthy();
           showPlayerStatus("Ao vivo");
           hidePlayerStatusLater();
         },
         onstreamcompleted: function () {
           showPlayerStatus("Transmissao finalizada");
+          schedulePlaybackRecovery("Reconectando stream", 2500);
         },
         onerror: function (eventType) {
           showPlayerStatus("Erro no player: " + eventType);
+          schedulePlaybackRecovery("Erro no player", 1200);
         }
       });
       resizeAvPlay();
       webapis.avplay.prepareAsync(
         function () {
           webapis.avplay.play();
+          markPlaybackHealthy();
           showPlayerStatus("Ao vivo");
           hidePlayerStatusLater();
         },
@@ -1938,6 +2021,7 @@
         });
         hls.on(Hls.Events.ERROR, function (event, data) {
           if (data && data.fatal) {
+            schedulePlaybackRecovery("Reconectando stream", 1200);
             fail();
           }
         });
@@ -1984,6 +2068,7 @@
         activeMpegTsPlayer = player;
         if (mpegts.Events && mpegts.Events.ERROR) {
           player.on(mpegts.Events.ERROR, function () {
+            schedulePlaybackRecovery("Reconectando stream", 1200);
             fail();
           });
         }
@@ -2229,14 +2314,135 @@
   ];
 
   function htmlPlayingOnce() {
+    markPlaybackHealthy();
     showPlayerStatus("Ao vivo");
     hidePlayerStatusLater();
+  }
+
+  function beginPlaybackWatchdog(channelId, resetRetries) {
+    playbackWatchdogId = channelId || "";
+    playbackLastProgressAt = Date.now();
+    if (resetRetries) {
+      playbackRetryCount = 0;
+    }
+    if (playbackWatchdogTimer) {
+      clearInterval(playbackWatchdogTimer);
+    }
+    playbackWatchdogTimer = setInterval(function () {
+      if (!state.isPlayerOpen || state.isPaused) {
+        return;
+      }
+      if (Date.now() - playbackLastProgressAt > 30000) {
+        schedulePlaybackRecovery("Reconectando stream", 1);
+      }
+    }, 10000);
+  }
+
+  function stopPlaybackWatchdog() {
+    if (playbackWatchdogTimer) {
+      clearInterval(playbackWatchdogTimer);
+      playbackWatchdogTimer = null;
+    }
+    if (playbackRecoveryTimer) {
+      clearTimeout(playbackRecoveryTimer);
+      playbackRecoveryTimer = null;
+    }
+  }
+
+  function markPlaybackHealthy() {
+    playbackLastProgressAt = Date.now();
+    if (playbackRecoveryTimer) {
+      clearTimeout(playbackRecoveryTimer);
+      playbackRecoveryTimer = null;
+    }
+    if (playbackRetryCount > 0) {
+      playbackRetryCount = 0;
+    }
+  }
+
+  function schedulePlaybackRecovery(message, delay) {
+    if (!state.isPlayerOpen || state.isPaused || playbackRecoveryTimer) {
+      return;
+    }
+
+    playbackRecoveryTimer = setTimeout(function () {
+      var channel = findChannel(state.currentId);
+      playbackRecoveryTimer = null;
+
+      if (!state.isPlayerOpen || state.isPaused || !channel) {
+        return;
+      }
+      if (playbackWatchdogId && playbackWatchdogId !== channel.id) {
+        return;
+      }
+      if (Date.now() - playbackLastProgressAt < 8000) {
+        return;
+      }
+
+      playbackRetryCount += 1;
+      if (playbackRetryCount > 6) {
+        showPlayerStatus("Stream instavel. Escolha outro canal.");
+        return;
+      }
+
+      showPlayerStatus(message || "Reconectando stream");
+      stopPlayback();
+      beginPlaybackWatchdog(channel.id, false);
+      if (canUseAvPlay()) {
+        playWithAvPlay(channel.url);
+      } else {
+        playWithHtmlVideo(channel.url);
+      }
+    }, delay || 1);
+  }
+
+  function requestScreenWakeLock() {
+    if (!navigator.wakeLock || wakeLock) {
+      return;
+    }
+
+    navigator.wakeLock.request("screen").then(
+      function (lock) {
+        wakeLock = lock;
+        wakeLock.addEventListener("release", function () {
+          wakeLock = null;
+        });
+      },
+      function (error) {
+        log("Wake Lock indisponivel", error);
+      }
+    );
+  }
+
+  function releaseScreenWakeLock() {
+    if (!wakeLock) {
+      return;
+    }
+
+    var result = wakeLock.release();
+    if (result && result["catch"]) {
+      result["catch"](function (error) {
+        log("Nao foi possivel liberar Wake Lock", error);
+      });
+    }
+    wakeLock = null;
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState === "visible" && state.isPlayerOpen) {
+      requestScreenWakeLock();
+      markPlaybackHealthy();
+    }
   }
 
   function closePlayer() {
     state.isPlayerOpen = false;
     clearTimeout(overlayTimer);
     stopPlayback();
+    releaseScreenWakeLock();
+    if (isPlayerFullscreen()) {
+      exitPlayerFullscreen();
+    }
     dom.playerScreen.hidden = true;
     dom.playerOverlay.className = "player-overlay";
     renderChannels();
@@ -2244,6 +2450,7 @@
   }
 
   function stopPlayback() {
+    stopPlaybackWatchdog();
     if (canUseAvPlay()) {
       stopAvPlay();
     }
@@ -2294,6 +2501,79 @@
     }
   }
 
+  function fullscreenElement() {
+    return (
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.msFullscreenElement ||
+      null
+    );
+  }
+
+  function isPlayerFullscreen() {
+    return fullscreenElement() === dom.playerScreen;
+  }
+
+  function requestPlayerFullscreen() {
+    var target = dom.playerScreen;
+    if (!target) {
+      return;
+    }
+
+    try {
+      if (target.requestFullscreen) {
+        target.requestFullscreen();
+      } else if (target.webkitRequestFullscreen) {
+        target.webkitRequestFullscreen();
+      } else if (target.msRequestFullscreen) {
+        target.msRequestFullscreen();
+      }
+    } catch (error) {
+      log("Nao foi possivel entrar em tela cheia", error);
+    }
+  }
+
+  function exitPlayerFullscreen() {
+    try {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      } else if (document.webkitExitFullscreen) {
+        document.webkitExitFullscreen();
+      } else if (document.msExitFullscreen) {
+        document.msExitFullscreen();
+      }
+    } catch (error) {
+      log("Nao foi possivel sair da tela cheia", error);
+    }
+  }
+
+  function toggleFullscreen() {
+    if (!state.isPlayerOpen) {
+      return;
+    }
+
+    if (isPlayerFullscreen()) {
+      exitPlayerFullscreen();
+    } else {
+      requestPlayerFullscreen();
+    }
+    setTimeout(updateFullscreenButton, 80);
+  }
+
+  function updateFullscreenButton() {
+    if (!dom.fullscreenButton) {
+      return;
+    }
+    var on = isPlayerFullscreen();
+    dom.fullscreenButton.classList.toggle("is-active", on);
+    dom.fullscreenButton.setAttribute("aria-pressed", on ? "true" : "false");
+    dom.fullscreenButton.setAttribute(
+      "aria-label",
+      on ? "Sair da tela cheia" : "Tela cheia"
+    );
+    resizeAvPlay();
+  }
+
   function togglePause() {
     showPlayerOverlay();
 
@@ -2302,20 +2582,31 @@
         if (state.isPaused) {
           webapis.avplay.play();
           state.isPaused = false;
+          markPlaybackHealthy();
+          requestScreenWakeLock();
         } else {
           webapis.avplay.pause();
           state.isPaused = true;
+          releaseScreenWakeLock();
         }
       } catch (error) {
         log("Nao foi possivel alternar pausa", error);
       }
     } else {
       if (dom.htmlPlayer.paused) {
-        dom.htmlPlayer.play();
+        var result = dom.htmlPlayer.play();
+        if (result && result["catch"]) {
+          result["catch"](function (error) {
+            log("Nao foi possivel reproduzir video", error);
+          });
+        }
         state.isPaused = false;
+        markPlaybackHealthy();
+        requestScreenWakeLock();
       } else {
         dom.htmlPlayer.pause();
         state.isPaused = true;
+        releaseScreenWakeLock();
       }
     }
 
@@ -2408,6 +2699,7 @@
     }
     var on = !!state.favorites[state.currentId];
     dom.favoriteButton.classList.toggle("is-active", on);
+    dom.favoriteButton.setAttribute("aria-pressed", on ? "true" : "false");
     dom.favoriteButton.setAttribute(
       "aria-label",
       on ? "Remover favorito" : "Adicionar favorito"
@@ -2493,6 +2785,12 @@
       if (state.isPlayerOpen) {
         closePlayer();
       }
+      return;
+    }
+
+    if (state.isPlayerOpen && (key === "f" || key === "F")) {
+      event.preventDefault();
+      toggleFullscreen();
       return;
     }
 
