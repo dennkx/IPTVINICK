@@ -4,6 +4,9 @@
   var STORAGE_KEY = "inick-iptv-state-v1";
   var SOURCE_SNAPSHOT_KEY = STORAGE_KEY + ":source";
   var M3U_TEXT_CACHE_KEY = STORAGE_KEY + ":m3u-text";
+  var DEFAULT_M3U_URL =
+    "https://hightechtvr1.online/get.php?username=902722181&password=575532272&type=m3u_plus&output=ts";
+  var DEFAULT_M3U_LABEL = "Lista IPTV";
   var M3U_CACHE_MAX_AGE_MS = 48 * 60 * 60 * 1000;
   var M3U_CACHE_MAX_CHARS = 4200000;
   var FIRST_RENDER_LIMIT = 180;
@@ -40,6 +43,7 @@
     registerTvKeys();
     bindEvents();
     restore();
+    ensureStartupPlaylistSource();
     rebuildModuleBuckets();
     updateClock();
     clockTimer = setInterval(updateClock, 30000);
@@ -48,16 +52,55 @@
       renderShell();
       requestAnimationFrame(function () {
         showLive();
+        refreshStartupPlaylist();
       });
     } else if (hasRemotePlaylistSource()) {
       renderShell();
       importFromUrl(getRemotePlaylistUrl(), state.source, {
         loaderText: "A carregar a sua lista...",
+        forceNetwork: true,
+        useDiskCacheBeforeNetwork: true,
         skipSuccessToast: true
       });
     } else {
       showHome();
     }
+  }
+
+  function makeDefaultM3uSource() {
+    return {
+      type: "m3u-url",
+      url: DEFAULT_M3U_URL,
+      label: DEFAULT_M3U_LABEL
+    };
+  }
+
+  function ensureStartupPlaylistSource() {
+    if (!hasRemotePlaylistSource()) {
+      state.source = makeDefaultM3uSource();
+    }
+    applySourceToForm(state.source);
+    persistSourceDraft(state.source);
+    state.modalMode = state.source.type === "xtream" ? "xtream" : "m3u";
+    setModalMode(state.modalMode);
+  }
+
+  function refreshStartupPlaylist() {
+    var url;
+    if (!hasRemotePlaylistSource()) {
+      return;
+    }
+    url = getRemotePlaylistUrl();
+    if (!url) {
+      return;
+    }
+    importFromUrl(url, state.source, {
+      quietRefresh: true,
+      noSplash: true,
+      forceNetwork: true,
+      skipDiskCache: true,
+      skipSuccessToast: true
+    });
   }
 
   function hasRemotePlaylistSource() {
@@ -1331,7 +1374,7 @@
     options = options || {};
 
     var canUseDiskCache =
-      !options.forceNetwork &&
+      (!options.forceNetwork || options.useDiskCacheBeforeNetwork) &&
       !options.quietRefresh &&
       !options.skipDiskCache;
 
