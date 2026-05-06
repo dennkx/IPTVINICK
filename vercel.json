@@ -5,6 +5,14 @@
       "destination": "http://hightechtvr1.online/:path*"
     },
     {
+      "source": "/iptv-proxy-e/:path*",
+      "destination": "http://e.hightechtvr1.online/:path*"
+    },
+    {
+      "source": "/iptv-proxy-techon/:path*",
+      "destination": "http://techon.one/:path*"
+    },
+    {
       "source": "/hls/:path*",
       "destination": "http://hightechtvr1.online/hls/:path*"
     }

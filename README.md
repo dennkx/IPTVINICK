@@ -7,6 +7,8 @@ Aplicativo Web Tizen para abrir listas IPTV M3U/M3U8, com visual de TV, grupos, 
 - Importa lista por URL M3U.
 - Importa arquivo `.m3u`/`.m3u8` no teste pelo navegador.
 - Gera URL M3U a partir de dados Xtream: servidor, usuario e senha.
+- Tela Edits com presets M3U, Xtream, EPG e SSIPTV.
+- Campo Web Player para alternar entre modo automatico, HLS `.m3u8` e TS original no navegador.
 - Usa `webapis.avplay` na TV Samsung Tizen.
 - Usa `<video>` como fallback para teste em navegador.
 - Navega por controle remoto: setas, OK, Voltar, Play/Pause, Canal +/-, teclas coloridas.

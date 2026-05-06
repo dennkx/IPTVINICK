@@ -4,9 +4,105 @@
   var STORAGE_KEY = "inick-iptv-state-v1";
   var SOURCE_SNAPSHOT_KEY = STORAGE_KEY + ":source";
   var M3U_TEXT_CACHE_KEY = STORAGE_KEY + ":m3u-text";
+  var ACCESS_USERNAME = "902722181";
+  var ACCESS_PASSWORD = "575532272";
+  var MAIN_XTREAM_SERVER = "http://hightechtvr1.online";
+  var ALT_XTREAM_SERVER = "http://techon.one:80";
   var DEFAULT_M3U_URL =
-    "https://hightechtvr1.online/get.php?username=902722181&password=575532272&type=m3u_plus&output=ts";
-  var DEFAULT_M3U_LABEL = "Lista IPTV";
+    "http://hightechtvr1.online/get.php?username=" +
+    ACCESS_USERNAME +
+    "&password=" +
+    ACCESS_PASSWORD +
+    "&type=m3u_plus&output=ts";
+  var SHORT_M3U_URL =
+    "http://e.hightechtvr1.online/p/" +
+    ACCESS_USERNAME +
+    "/" +
+    ACCESS_PASSWORD +
+    "/m3u";
+  var EPG_URL =
+    "http://hightechtvr1.online:80/xmltv.php?username=" +
+    ACCESS_USERNAME +
+    "&password=" +
+    ACCESS_PASSWORD +
+    "&type=m3u_plus&output=mpegts";
+  var SSIPTV_URL =
+    "http://e.hightechtvr1.online/p/" +
+    ACCESS_USERNAME +
+    "/" +
+    ACCESS_PASSWORD +
+    "/ssiptv";
+  var DEFAULT_M3U_LABEL = "M3U recomendado";
+  var EDIT_PRESETS = [
+    {
+      id: "m3u-main",
+      type: "m3u-url",
+      title: "M3U recomendado",
+      badge: "RECOMENDADO",
+      details: [
+        { label: "Link M3U", value: DEFAULT_M3U_URL }
+      ],
+      url: DEFAULT_M3U_URL
+    },
+    {
+      id: "m3u-short",
+      type: "m3u-url",
+      title: "M3U curto",
+      badge: "M3U",
+      details: [
+        { label: "Link curto", value: SHORT_M3U_URL }
+      ],
+      url: SHORT_M3U_URL
+    },
+    {
+      id: "xtream-main",
+      type: "xtream",
+      title: "Xtream principal",
+      badge: "XCIPTV",
+      details: [
+        { label: "Usuario", value: ACCESS_USERNAME },
+        { label: "Senha", value: ACCESS_PASSWORD },
+        { label: "URL", value: MAIN_XTREAM_SERVER }
+      ],
+      server: MAIN_XTREAM_SERVER,
+      username: ACCESS_USERNAME,
+      password: ACCESS_PASSWORD
+    },
+    {
+      id: "xtream-alt",
+      type: "xtream",
+      title: "Xtream alternativo",
+      badge: "SMARTERS",
+      details: [
+        { label: "Usuario", value: ACCESS_USERNAME },
+        { label: "Senha", value: ACCESS_PASSWORD },
+        { label: "URL", value: ALT_XTREAM_SERVER }
+      ],
+      server: ALT_XTREAM_SERVER,
+      username: ACCESS_USERNAME,
+      password: ACCESS_PASSWORD
+    },
+    {
+      id: "epg",
+      type: "epg",
+      title: "EPG",
+      badge: "XMLTV",
+      details: [
+        { label: "Guia", value: EPG_URL }
+      ],
+      url: EPG_URL
+    },
+    {
+      id: "ssiptv",
+      type: "m3u-url",
+      title: "SSIPTV",
+      badge: "SSIPTV",
+      details: [
+        { label: "Link", value: SSIPTV_URL }
+      ],
+      url: SSIPTV_URL
+    }
+  ];
   var HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js";
   var MPEGTS_JS_URL =
     "https://cdn.jsdelivr.net/npm/mpegts.js@1.8.0/dist/mpegts.min.js";
@@ -48,6 +144,9 @@
     modalMode: "m3u",
     view: "home",
     module: "live",
+    editPresetId: "m3u-main",
+    epgUrl: EPG_URL,
+    webPlayerMode: "auto",
     isPlayerOpen: false,
     isPaused: false
   };
@@ -94,7 +193,9 @@
   function ensureStartupPlaylistSource() {
     if (!hasRemotePlaylistSource()) {
       state.source = makeDefaultM3uSource();
+      state.editPresetId = "m3u-main";
     }
+    state.editPresetId = presetIdForSource(state.source) || state.editPresetId || "m3u-main";
     applySourceToForm(state.source);
     persistSourceDraft(state.source);
     state.modalMode = state.source.type === "xtream" ? "xtream" : "m3u";
@@ -158,21 +259,31 @@
   function resolveIptvNetworkUrl(url) {
     var link;
     var path;
+    var host;
     if (!shouldUseIptvProxy() || !url) {
       return url;
     }
 
     link = document.createElement("a");
     link.href = url;
-    if ((link.hostname || "").toLowerCase() !== "hightechtvr1.online") {
-      return url;
-    }
+    host = (link.hostname || "").toLowerCase();
 
     path = link.pathname || "/";
     if (path.charAt(0) !== "/") {
       path = "/" + path;
     }
-    return "/iptv-proxy" + path + (link.search || "") + (link.hash || "");
+
+    if (host === "hightechtvr1.online") {
+      return "/iptv-proxy" + path + (link.search || "") + (link.hash || "");
+    }
+    if (host === "e.hightechtvr1.online") {
+      return "/iptv-proxy-e" + path + (link.search || "") + (link.hash || "");
+    }
+    if (host === "techon.one") {
+      return "/iptv-proxy-techon" + path + (link.search || "") + (link.hash || "");
+    }
+
+    return url;
   }
 
   function showAppLoader(message) {
@@ -227,6 +338,13 @@
     dom.app = document.getElementById("app");
     dom.homeScreen = document.getElementById("homeScreen");
     dom.liveScreen = document.getElementById("liveScreen");
+    dom.editScreen = document.getElementById("editScreen");
+    dom.editPresetList = document.getElementById("editPresetList");
+    dom.activeEditTitle = document.getElementById("activeEditTitle");
+    dom.activeEditType = document.getElementById("activeEditType");
+    dom.activeEditData = document.getElementById("activeEditData");
+    dom.activeEpgUrl = document.getElementById("activeEpgUrl");
+    dom.webPlayerModeSelect = document.getElementById("webPlayerModeSelect");
     dom.liveTile = document.getElementById("liveTile");
     dom.liveCount = document.getElementById("liveCount");
     dom.movieCount = document.getElementById("movieCount");
@@ -335,6 +453,10 @@
       event.preventDefault();
       loadXtream();
     });
+
+    if (dom.webPlayerModeSelect) {
+      dom.webPlayerModeSelect.addEventListener("change", changeWebPlayerMode);
+    }
 
     dom.playlistFileInput.addEventListener("change", loadPlaylistFile);
 
@@ -505,6 +627,11 @@
         state.recent = Array.isArray(data.recent) ? data.recent : [];
         state.source = data.source || null;
         state.currentId = data.currentId || null;
+        state.editPresetId = data.editPresetId || state.editPresetId;
+        state.epgUrl = data.epgUrl || state.epgUrl;
+        state.webPlayerMode = normalizeWebPlayerMode(
+          data.webPlayerMode || state.webPlayerMode
+        );
       } catch (error) {
         log("Estado salvo invalido", error);
         state.channels = [];
@@ -531,6 +658,15 @@
           if (meta.currentId !== undefined && meta.currentId !== null) {
             state.currentId = meta.currentId;
           }
+          if (meta.editPresetId) {
+            state.editPresetId = meta.editPresetId;
+          }
+          if (meta.epgUrl) {
+            state.epgUrl = meta.epgUrl;
+          }
+          if (meta.webPlayerMode) {
+            state.webPlayerMode = normalizeWebPlayerMode(meta.webPlayerMode);
+          }
         }
       } catch (metaErr) {
         log("Meta estado invalida", metaErr);
@@ -547,9 +683,12 @@
     if (formSrc) {
       applySourceToForm(formSrc);
       state.modalMode = formSrc.type === "xtream" ? "xtream" : "m3u";
+      state.editPresetId = presetIdForSource(formSrc) || state.editPresetId;
     } else {
       state.modalMode = state.modalMode || "m3u";
     }
+    state.webPlayerMode = normalizeWebPlayerMode(state.webPlayerMode);
+    updateWebPlayerModeField();
     setModalMode(state.modalMode);
   }
 
@@ -559,7 +698,10 @@
       favorites: mapToArray(state.favorites),
       recent: state.recent,
       source: state.source,
-      currentId: state.currentId
+      currentId: state.currentId,
+      editPresetId: state.editPresetId,
+      epgUrl: state.epgUrl,
+      webPlayerMode: state.webPlayerMode
     };
 
     try {
@@ -604,7 +746,7 @@
 
     dom.refreshButton.disabled = !hasRemoteSource;
     dom.focusSearchButton.disabled = state.view !== "live";
-    dom.homeBackButton.disabled = state.view !== "live";
+    dom.homeBackButton.disabled = state.view === "home";
     dom.playlistLabel.textContent = describeSource();
     dom.liveCount.textContent = pluralize(counts.live, "canal", "canais");
     if (dom.movieCount) {
@@ -616,6 +758,8 @@
 
     if (state.view === "home") {
       dom.screenTitle.textContent = "INICIO";
+    } else if (state.view === "edits") {
+      dom.screenTitle.textContent = "EDITS";
     } else if (state.module === "movies") {
       dom.screenTitle.textContent = "MOVIES";
     } else if (state.module === "series") {
@@ -661,8 +805,13 @@
       return;
     }
 
+    if (action === "edits") {
+      showEdits();
+      return;
+    }
+
     if (action === "settings") {
-      openPlaylistModal();
+      showEdits();
       return;
     }
 
@@ -684,6 +833,9 @@
     state.module = "live";
     dom.homeScreen.hidden = false;
     dom.liveScreen.hidden = true;
+    if (dom.editScreen) {
+      dom.editScreen.hidden = true;
+    }
     dom.app.className = "app-shell is-home";
     renderShell();
     setTimeout(function () {
@@ -707,6 +859,9 @@
     }
     dom.homeScreen.hidden = true;
     dom.liveScreen.hidden = false;
+    if (dom.editScreen) {
+      dom.editScreen.hidden = true;
+    }
     dom.app.className = "app-shell is-live";
     renderAll();
 
@@ -724,6 +879,9 @@
     dom.searchInput.value = "";
     dom.homeScreen.hidden = true;
     dom.liveScreen.hidden = false;
+    if (dom.editScreen) {
+      dom.editScreen.hidden = true;
+    }
     dom.app.className = "app-shell is-live";
     persist();
     renderAll();
@@ -742,12 +900,32 @@
     dom.searchInput.value = "";
     dom.homeScreen.hidden = true;
     dom.liveScreen.hidden = false;
+    if (dom.editScreen) {
+      dom.editScreen.hidden = true;
+    }
     dom.app.className = "app-shell is-live";
     persist();
     renderAll();
 
     setTimeout(function () {
       focusLiveList();
+    }, 0);
+  }
+
+  function showEdits() {
+    state.view = "edits";
+    dom.homeScreen.hidden = true;
+    dom.liveScreen.hidden = true;
+    if (dom.editScreen) {
+      dom.editScreen.hidden = false;
+    }
+    dom.app.className = "app-shell is-edit";
+    renderShell();
+    renderEditPresets();
+    persist();
+
+    setTimeout(function () {
+      focusSelectedEditPreset();
     }, 0);
   }
 
@@ -1325,6 +1503,291 @@
     return n;
   }
 
+  function presetById(id) {
+    var i;
+    for (i = 0; i < EDIT_PRESETS.length; i += 1) {
+      if (EDIT_PRESETS[i].id === id) {
+        return EDIT_PRESETS[i];
+      }
+    }
+    return null;
+  }
+
+  function sourceFromPreset(preset) {
+    if (!preset) {
+      return null;
+    }
+    if (preset.type === "m3u-url") {
+      return {
+        type: "m3u-url",
+        url: preset.url,
+        label: preset.title
+      };
+    }
+    if (preset.type === "xtream") {
+      return {
+        type: "xtream",
+        server: preset.server,
+        username: preset.username,
+        password: preset.password,
+        label: preset.title
+      };
+    }
+    return null;
+  }
+
+  function urlFromPreset(preset) {
+    if (!preset) {
+      return "";
+    }
+    if (preset.type === "m3u-url") {
+      return preset.url || "";
+    }
+    if (preset.type === "xtream") {
+      return buildXtreamM3uUrl(preset.server, preset.username, preset.password);
+    }
+    return "";
+  }
+
+  function presetIdForSource(source) {
+    var i;
+    var preset;
+    if (!source) {
+      return "";
+    }
+    for (i = 0; i < EDIT_PRESETS.length; i += 1) {
+      preset = EDIT_PRESETS[i];
+      if (preset.type === "m3u-url" && source.type === "m3u-url") {
+        if (sameUrl(preset.url, source.url)) {
+          return preset.id;
+        }
+      } else if (preset.type === "xtream" && source.type === "xtream") {
+        if (
+          sameServer(preset.server, source.server) &&
+          preset.username === source.username &&
+          preset.password === source.password
+        ) {
+          return preset.id;
+        }
+      }
+    }
+    return "";
+  }
+
+  function sameUrl(a, b) {
+    return trim(a) === trim(b);
+  }
+
+  function sameServer(a, b) {
+    return trim(a).replace(/\/+$/, "").toLowerCase() ===
+      trim(b).replace(/\/+$/, "").toLowerCase();
+  }
+
+  function renderEditPresets() {
+    var activePresetId = presetIdForSource(state.source);
+    var i;
+
+    if (!dom.editPresetList) {
+      return;
+    }
+
+    dom.editPresetList.innerHTML = "";
+    for (i = 0; i < EDIT_PRESETS.length; i += 1) {
+      dom.editPresetList.appendChild(
+        createEditPresetButton(EDIT_PRESETS[i], activePresetId)
+      );
+    }
+    renderActiveEditDetails(activePresetId);
+  }
+
+  function createEditPresetButton(preset, activePresetId) {
+    var button = document.createElement("button");
+    var head = document.createElement("span");
+    var title = document.createElement("strong");
+    var badge = document.createElement("em");
+    var details = document.createElement("span");
+    var i;
+
+    button.className = "edit-option";
+    if (preset.id === activePresetId) {
+      button.className += " is-active";
+    }
+    if (preset.type === "epg" && state.epgUrl === preset.url) {
+      button.className += " is-saved";
+    }
+    button.setAttribute("data-focusable", "true");
+    button.setAttribute("data-preset-id", preset.id);
+    button.setAttribute("aria-pressed", preset.id === activePresetId ? "true" : "false");
+
+    head.className = "edit-option-head";
+    title.textContent = preset.title;
+    badge.textContent = preset.badge;
+    head.appendChild(title);
+    head.appendChild(badge);
+    button.appendChild(head);
+
+    details.className = "edit-option-details";
+    for (i = 0; i < preset.details.length; i += 1) {
+      details.appendChild(createEditDataLine(preset.details[i].label, preset.details[i].value));
+    }
+    button.appendChild(details);
+
+    button.addEventListener("click", selectEditPreset);
+    return button;
+  }
+
+  function createEditDataLine(label, value) {
+    var row = document.createElement("span");
+    var name = document.createElement("b");
+    var val = document.createElement("span");
+
+    row.className = "edit-data-line";
+    name.textContent = label;
+    val.textContent = value;
+    row.appendChild(name);
+    row.appendChild(val);
+    return row;
+  }
+
+  function renderActiveEditDetails(activePresetId) {
+    var source = state.source;
+    var activePreset = presetById(activePresetId);
+    var detailRows = [];
+    var i;
+
+    if (!dom.activeEditTitle || !dom.activeEditData) {
+      return;
+    }
+
+    dom.activeEditTitle.textContent =
+      (activePreset && activePreset.title) ||
+      (source && source.label) ||
+      "Nenhuma lista";
+
+    if (!source) {
+      dom.activeEditType.textContent = "Sem fonte";
+    } else if (source.type === "xtream") {
+      dom.activeEditType.textContent = "Xtream";
+      detailRows.push({ label: "Usuario", value: source.username || "" });
+      detailRows.push({ label: "Senha", value: source.password || "" });
+      detailRows.push({ label: "URL", value: source.server || "" });
+    } else if (source.type === "m3u-url") {
+      dom.activeEditType.textContent = "M3U";
+      detailRows.push({ label: "URL", value: source.url || "" });
+    } else {
+      dom.activeEditType.textContent = source.type || "Fonte";
+    }
+
+    dom.activeEditData.innerHTML = "";
+    for (i = 0; i < detailRows.length; i += 1) {
+      dom.activeEditData.appendChild(
+        createEditDataLine(detailRows[i].label, detailRows[i].value)
+      );
+    }
+
+    if (dom.activeEpgUrl) {
+      dom.activeEpgUrl.textContent = state.epgUrl || EPG_URL;
+    }
+    updateWebPlayerModeField();
+  }
+
+  function updateWebPlayerModeField() {
+    if (!dom.webPlayerModeSelect) {
+      return;
+    }
+    dom.webPlayerModeSelect.value = normalizeWebPlayerMode(state.webPlayerMode);
+  }
+
+  function changeWebPlayerMode() {
+    var channel;
+    state.webPlayerMode = normalizeWebPlayerMode(dom.webPlayerModeSelect.value);
+    persist();
+    showToast("Web Player: " + webPlayerModeLabel(state.webPlayerMode));
+
+    if (!state.isPlayerOpen || canUseAvPlay()) {
+      return;
+    }
+
+    channel = findChannel(state.currentId);
+    if (!channel) {
+      return;
+    }
+
+    stopPlayback();
+    state.isPaused = false;
+    updatePlayPauseButton();
+    beginPlaybackWatchdog(channel.id, true);
+    showPlayerStatus("Carregando");
+    playWithHtmlVideo(channel.url);
+  }
+
+  function normalizeWebPlayerMode(mode) {
+    if (mode === "hls" || mode === "ts") {
+      return mode;
+    }
+    return "auto";
+  }
+
+  function webPlayerModeLabel(mode) {
+    mode = normalizeWebPlayerMode(mode);
+    if (mode === "hls") {
+      return "HLS";
+    }
+    if (mode === "ts") {
+      return "TS";
+    }
+    return "Auto";
+  }
+
+  function selectEditPreset(event) {
+    var preset = presetById(event.currentTarget.getAttribute("data-preset-id"));
+    var source;
+    var url;
+
+    if (!preset) {
+      return;
+    }
+
+    if (preset.type === "epg") {
+      state.epgUrl = preset.url;
+      persist();
+      renderEditPresets();
+      showToast("EPG salvo");
+      return;
+    }
+
+    source = sourceFromPreset(preset);
+    url = urlFromPreset(preset);
+    if (!source || !url) {
+      return;
+    }
+
+    state.editPresetId = preset.id;
+    state.modalMode = source.type === "xtream" ? "xtream" : "m3u";
+    applySourceToForm(source);
+    setModalMode(state.modalMode);
+    persistSourceDraft(source);
+    renderEditPresets();
+
+    importFromUrl(url, source, {
+      loaderText: "A carregar " + preset.title + "...",
+      forceNetwork: true
+    });
+  }
+
+  function focusSelectedEditPreset() {
+    var selector = '[data-preset-id="' + cssEscape(presetIdForSource(state.source)) + '"]';
+    var target = dom.editPresetList ? dom.editPresetList.querySelector(selector) : null;
+    if (!target && dom.editPresetList) {
+      target = dom.editPresetList.querySelector("[data-focusable]");
+    }
+    if (target) {
+      target.focus();
+    } else {
+      focusFirstAvailable();
+    }
+  }
+
   function openPlaylistModal() {
     dom.playlistModal.hidden = false;
     dom.modalMessage.textContent = "";
@@ -1604,6 +2067,7 @@
     state.channels = channels;
     rebuildModuleBuckets();
     state.source = source;
+    state.editPresetId = presetIdForSource(source) || state.editPresetId;
     if (
       source &&
       (source.type === "m3u-url" || source.type === "xtream")
@@ -2090,6 +2554,10 @@
 
   function setupM3u8VariantPlayback(v, url, done, fail) {
     var variant = makeM3u8Variant(url);
+    if (normalizeWebPlayerMode(state.webPlayerMode) === "ts") {
+      done(new Error("HLS desativado"));
+      return;
+    }
     if (!variant) {
       done(new Error("Sem variante HLS"));
       return;
@@ -2100,11 +2568,44 @@
   function playWithHtmlVideo(url) {
     try {
       htmlVideoStrategyIndex = 0;
-      applyHtmlVideoStrategy(resolveIptvNetworkUrl(url));
+      applyHtmlVideoStrategy(resolveIptvNetworkUrl(resolveWebPlayerStreamUrl(url)));
     } catch (error) {
       showPlayerStatus("Erro ao abrir stream");
       log("HTML video erro", error);
     }
+  }
+
+  function resolveWebPlayerStreamUrl(url) {
+    var mode = normalizeWebPlayerMode(state.webPlayerMode);
+    if (mode === "hls") {
+      return preferHlsStreamUrl(url);
+    }
+    if (mode === "ts") {
+      return preferTsStreamUrl(url);
+    }
+    return url;
+  }
+
+  function preferHlsStreamUrl(url) {
+    var out = String(url || "");
+    out = replaceQueryValue(out, "output", "m3u8");
+    out = out.replace(/\.ts(?=([?#]|$))/i, ".m3u8");
+    return out;
+  }
+
+  function preferTsStreamUrl(url) {
+    var out = String(url || "");
+    out = replaceQueryValue(out, "output", "ts");
+    out = out.replace(/\.m3u8(?=([?#]|$))/i, ".ts");
+    return out;
+  }
+
+  function replaceQueryValue(url, name, value) {
+    var pattern = new RegExp("([?&]" + name + "=)[^&#]*", "i");
+    if (!pattern.test(url)) {
+      return url;
+    }
+    return url.replace(pattern, "$1" + encodeURIComponent(value));
   }
 
   function applyHtmlVideoStrategy(url) {
@@ -2788,6 +3289,10 @@
       showPlayerOverlay();
     }
 
+    if (isSelectInput(active) && allowSelectKey(key)) {
+      return;
+    }
+
     if (isTextInput(active) && allowTextKey(key)) {
       return;
     }
@@ -2908,6 +3413,16 @@
     );
   }
 
+  function allowSelectKey(key) {
+    return (
+      key === "ArrowUp" ||
+      key === "ArrowDown" ||
+      key === "Enter" ||
+      key === " " ||
+      key === "Spacebar"
+    );
+  }
+
   function handleBack() {
     if (state.isPlayerOpen) {
       closePlayer();
@@ -2919,7 +3434,7 @@
       return;
     }
 
-    if (state.view === "live") {
+    if (state.view !== "home") {
       showHome();
       return;
     }
@@ -3043,6 +3558,11 @@
       return;
     }
 
+    if (state.view === "edits") {
+      focusSelectedEditPreset();
+      return;
+    }
+
     if (dom.liveTile) {
       dom.liveTile.focus();
     } else {
@@ -3126,6 +3646,13 @@
     }
     var tag = String(element.tagName || "").toLowerCase();
     return tag === "input" || tag === "textarea";
+  }
+
+  function isSelectInput(element) {
+    if (!element) {
+      return false;
+    }
+    return String(element.tagName || "").toLowerCase() === "select";
   }
 
   function buildGroups(channels) {

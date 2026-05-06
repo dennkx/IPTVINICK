@@ -119,10 +119,10 @@
           <button
             class="home-tile wide-tile settings-tile"
             data-focusable
-            data-view-action="settings"
+            data-view-action="edits"
           >
-            <span class="tile-icon settings-icon" aria-hidden="true"></span>
-            <strong>Settings</strong>
+            <span class="tile-icon edits-icon" aria-hidden="true"></span>
+            <strong>Edits</strong>
           </button>
 
           <button
@@ -134,6 +134,46 @@
             <span class="tile-icon playlist-icon" aria-hidden="true"></span>
             <strong>Playlists</strong>
           </button>
+        </div>
+      </section>
+
+      <section id="editScreen" class="edit-screen" hidden>
+        <div class="edit-layout">
+          <section class="edit-list-panel" aria-label="Edits">
+            <div class="panel-title">Configurações</div>
+            <div id="editPresetList" class="edit-preset-list"></div>
+          </section>
+
+          <aside class="edit-active-panel" aria-label="Configuração ativa">
+            <div class="panel-title">Ativo</div>
+            <div class="edit-active-card">
+              <span id="activeEditType" class="edit-active-type">M3U</span>
+              <strong id="activeEditTitle">M3U recomendado</strong>
+              <div id="activeEditData" class="edit-active-data"></div>
+            </div>
+            <div class="edit-active-card">
+              <span class="edit-active-type">EPG</span>
+              <strong>Guia salvo</strong>
+              <div class="edit-active-data">
+                <span class="edit-data-line">
+                  <b>URL</b>
+                  <span id="activeEpgUrl">http://hightechtvr1.online:80/xmltv.php?username=902722181&amp;password=575532272&amp;type=m3u_plus&amp;output=mpegts</span>
+                </span>
+              </div>
+            </div>
+            <div class="edit-active-card">
+              <span class="edit-active-type">WEB</span>
+              <strong>Web Player</strong>
+              <label class="edit-select-field">
+                <span>Modo</span>
+                <select id="webPlayerModeSelect" data-focusable>
+                  <option value="auto">Auto</option>
+                  <option value="hls">Forçar HLS (.m3u8)</option>
+                  <option value="ts">Usar TS original</option>
+                </select>
+              </label>
+            </div>
+          </aside>
         </div>
       </section>
 
@@ -327,7 +367,7 @@
               type="url"
               inputmode="url"
               autocomplete="off"
-              value="https://hightechtvr1.online/get.php?username=902722181&password=575532272&type=m3u_plus&output=ts"
+              value="http://hightechtvr1.online/get.php?username=902722181&amp;password=575532272&amp;type=m3u_plus&amp;output=ts"
               placeholder="http://servidor/lista.m3u"
             />
           </label>
