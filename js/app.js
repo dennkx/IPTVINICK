@@ -32,6 +32,12 @@
     "/" +
     ACCESS_PASSWORD +
     "/ssiptv";
+  var SSIPTV_PLAYLIST_URL =
+    "http://e.hightechtvr1.online/ssiptv/" +
+    ACCESS_USERNAME +
+    "/" +
+    ACCESS_PASSWORD +
+    "/channels";
   var DEFAULT_M3U_LABEL = "M3U recomendado";
   var EDIT_PRESETS = [
     {
@@ -95,12 +101,13 @@
     {
       id: "ssiptv",
       type: "m3u-url",
-      title: "SSIPTV",
+      title: "SSIPTV canais",
       badge: "SSIPTV",
       details: [
-        { label: "Link", value: SSIPTV_URL }
+        { label: "Link", value: SSIPTV_URL },
+        { label: "Lista", value: SSIPTV_PLAYLIST_URL }
       ],
-      url: SSIPTV_URL
+      url: SSIPTV_PLAYLIST_URL
     }
   ];
   var HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js";
@@ -174,6 +181,7 @@
       importFromUrl(getRemotePlaylistUrl(), state.source, {
         loaderText: "A carregar a sua lista...",
         forceNetwork: true,
+        allowFallback: true,
         useDiskCacheBeforeNetwork: true,
         skipSuccessToast: true
       });
@@ -1771,7 +1779,8 @@
 
     importFromUrl(url, source, {
       loaderText: "A carregar " + preset.title + "...",
-      forceNetwork: true
+      forceNetwork: true,
+      allowFallback: true
     });
   }
 
@@ -1983,6 +1992,9 @@
             importFromUrl(url, source, retryOpts);
             return;
           }
+          if (tryFallbackPlaylist(url, options)) {
+            return;
+          }
           hideAppLoader();
           if (options.quietRefresh) {
             log("Atualizacao em segundo plano falhou", error);
@@ -1996,8 +2008,13 @@
           if (options.recoverModalOnFail || state.channels.length === 0) {
             dom.playlistModal.hidden = false;
           }
-          setModalMessage(message);
-          showToast("Falha ao carregar lista");
+          if (state.channels.length > 0) {
+            setModalMessage("Nao foi possivel atualizar. A lista atual foi mantida.");
+            showToast("Lista atual mantida");
+          } else {
+            setModalMessage(message);
+            showToast("Falha ao carregar lista");
+          }
           log(message, error);
           return;
         }
@@ -2014,6 +2031,9 @@
             importFromUrl(url, source, parseRetryOpts);
             return;
           }
+          if (tryFallbackPlaylist(url, options)) {
+            return;
+          }
           hideAppLoader();
           if (options.quietRefresh) {
             log(parseError.message || parseError, parseError);
@@ -2027,8 +2047,13 @@
           if (options.recoverModalOnFail || state.channels.length === 0) {
             dom.playlistModal.hidden = false;
           }
-          setModalMessage(parseError.message || "Lista M3U invalida.");
-          showToast("Lista invalida");
+          if (state.channels.length > 0) {
+            setModalMessage("Nao foi possivel atualizar. A lista atual foi mantida.");
+            showToast("Lista atual mantida");
+          } else {
+            setModalMessage(parseError.message || "Lista M3U invalida.");
+            showToast("Lista invalida");
+          }
         }
       },
       {
@@ -2040,6 +2065,33 @@
             }
       }
     );
+  }
+
+  function tryFallbackPlaylist(url, options) {
+    var fallbackSource;
+    var fallbackOptions;
+
+    if (options.skipFallback || sameUrl(url, SSIPTV_PLAYLIST_URL)) {
+      return false;
+    }
+    if (!options.allowFallback && state.channels.length > 0) {
+      return false;
+    }
+
+    fallbackSource = {
+      type: "m3u-url",
+      url: SSIPTV_PLAYLIST_URL,
+      label: "SSIPTV canais"
+    };
+    fallbackOptions = cloneImportOptions(options);
+    fallbackOptions.skipFallback = true;
+    fallbackOptions.skipProxy = false;
+    fallbackOptions.forceNetwork = false;
+    fallbackOptions.useDiskCacheBeforeNetwork = true;
+    fallbackOptions.loaderText = "A carregar SSIPTV...";
+
+    importFromUrl(SSIPTV_PLAYLIST_URL, fallbackSource, fallbackOptions);
+    return true;
   }
 
   function applyPlaylist(text, source, options) {
